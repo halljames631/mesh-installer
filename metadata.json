@@ -1,0 +1,6 @@
+{
+  "name": "Mesh Installer",
+  "description": "Flash Meshtastic and MeshCore firmware onto ESP32 and nRF52 LoRa boards via USB OTG Serial and Bluetooth Low Energy DFU.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

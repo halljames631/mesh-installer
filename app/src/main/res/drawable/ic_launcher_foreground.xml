@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- MCU Chip Package Outer Pins -->
+    <path
+        android:fillColor="#00B0FF"
+        android:pathData="M42,27h4v6h-4zM52,27h4v6h-4zM62,27h4v6h-4zM42,75h4v6h-4zM52,75h4v6h-4zM62,75h4v6h-4zM27,42h6v4h-6zM27,52h6v4h-6zM27,62h6v4h-6zM75,42h6v4h-6zM75,52h6v4h-6zM75,62h6v4h-6z" />
+    <!-- MCU Chip Body -->
+    <path
+        android:fillColor="#162836"
+        android:strokeColor="#00E676"
+        android:strokeWidth="3"
+        android:pathData="M37,33h34c2.2,0 4,1.8 4,4v34c0,2.2 -1.8,4 -4,4h-34c-2.2,0 -4,-1.8 -4,-4v-34c0,-2.2 1.8,-4 4,-4z" />
+    <!-- Mesh Network Nodes & Links Inside Chip -->
+    <path
+        android:strokeColor="#00B0FF"
+        android:strokeWidth="2.5"
+        android:pathData="M44,62 L54,43 L64,62 Z M44,62 L64,62" />
+    <!-- Top Node -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M54,39a4.5,4.5 0 1,0 0,9a4.5,4.5 0 1,0 0,-9z" />
+    <!-- Bottom Left Node -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M44,57.5a4.5,4.5 0 1,0 0,9a4.5,4.5 0 1,0 0,-9z" />
+    <!-- Bottom Right Node -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M64,57.5a4.5,4.5 0 1,0 0,9a4.5,4.5 0 1,0 0,-9z" />
+</vector>
