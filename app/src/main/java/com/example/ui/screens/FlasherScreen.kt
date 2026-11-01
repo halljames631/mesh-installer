@@ -727,7 +727,7 @@ private fun FlasherIdleView(
                                 )
                             } else {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    uiState.bleDiscoveredNodes.take(6).forEach { node ->
+                                    uiState.bleDiscoveredNodes.take(10).forEach { node ->
                                         val isSelected = uiState.selectedBleNode?.address == node.address
                                         Box(
                                             modifier = Modifier

@@ -808,11 +808,19 @@ class GitHubFirmwareRepository {
         fullErase: Boolean,
         useMeshtasticMui: Boolean = true,
         tDeckMeshCoreFlavor: TDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE,
+        preferBleOtaPackage: Boolean = false,
         onProgress: (Float, String) -> Unit
     ): PreparedFirmwareImage = withContext(Dispatchers.IO) {
         val isTDeckMeshCore = board.id == "lilygo_tdeck" && release.ecosystem == FirmwareEcosystem.MESHCORE
         val targetOwner = if (isTDeckMeshCore) tDeckMeshCoreFlavor.repoOwner else release.ecosystem.repoOwner
         val targetRepo = if (isTDeckMeshCore) tDeckMeshCoreFlavor.repoName else release.ecosystem.repoName
+
+        // Over BLE OTA on ESP32/ESP32-S3/ESP32-C3, always prefer the 0x10000 application partition binary
+        // rather than the 0x0000 full factory/merged binary.
+        val isEspFamily = board.mcu == McuArchitecture.ESP32 ||
+            board.mcu == McuArchitecture.ESP32_S3 ||
+            board.mcu == McuArchitecture.ESP32_C3
+        val effectiveFullErase = if (preferBleOtaPackage && isEspFamily) false else fullErase
 
         val variantDesc = when {
             board.id == "lilygo_tdeck" && release.ecosystem == FirmwareEcosystem.MESHTASTIC ->
@@ -846,7 +854,8 @@ class GitHubFirmwareRepository {
                 board = board,
                 meshCoreRole = meshCoreRole,
                 useMeshtasticMui = useMeshtasticMui,
-                tDeckMeshCoreFlavor = tDeckMeshCoreFlavor
+                tDeckMeshCoreFlavor = tDeckMeshCoreFlavor,
+                preferBleOtaPackage = preferBleOtaPackage
             ).isNotEmpty()
 
         val isFallbackPlaceholder = effectiveRelease.id.startsWith("fallback-") ||
@@ -876,7 +885,7 @@ class GitHubFirmwareRepository {
         // If the release has a real tag but empty assets (or lacks the role's tag assets), scrape expanded_assets directly
         if ((effectiveRelease.assets.none { it.downloadUrl.startsWith("https://") } ||
                 (effectiveRelease.ecosystem == FirmwareEcosystem.MESHCORE && !isTDeckMeshCore &&
-                    selectCandidateAssets(effectiveRelease, board, meshCoreRole, useMeshtasticMui, tDeckMeshCoreFlavor).isEmpty())) &&
+                    selectCandidateAssets(effectiveRelease, board, meshCoreRole, useMeshtasticMui, tDeckMeshCoreFlavor, preferBleOtaPackage).isEmpty())) &&
             !effectiveRelease.id.startsWith("fallback-")
         ) {
             val cleanVer = extractMeshCoreVersionSuffix(effectiveRelease.tagName)
@@ -914,7 +923,8 @@ class GitHubFirmwareRepository {
             board = board,
             meshCoreRole = meshCoreRole,
             useMeshtasticMui = useMeshtasticMui,
-            tDeckMeshCoreFlavor = tDeckMeshCoreFlavor
+            tDeckMeshCoreFlavor = tDeckMeshCoreFlavor,
+            preferBleOtaPackage = preferBleOtaPackage
         )
 
         for (candidate in candidates) {
@@ -927,7 +937,7 @@ class GitHubFirmwareRepository {
                         board = board,
                         ecosystem = effectiveRelease.ecosystem,
                         meshCoreRole = meshCoreRole,
-                        preferFactoryImage = fullErase,
+                        preferFactoryImage = effectiveFullErase,
                         useMeshtasticMui = useMeshtasticMui,
                         onProgress = onProgress
                     )
@@ -951,7 +961,7 @@ class GitHubFirmwareRepository {
                                     board = board,
                                     ecosystem = effectiveRelease.ecosystem,
                                     meshCoreRole = meshCoreRole,
-                                    preferFactoryImage = fullErase,
+                                    preferFactoryImage = effectiveFullErase,
                                     useMeshtasticMui = useMeshtasticMui,
                                     onProgress = onProgress
                                 )
@@ -1017,7 +1027,8 @@ class GitHubFirmwareRepository {
                 board = board,
                 meshCoreRole = meshCoreRole,
                 useMeshtasticMui = useMeshtasticMui,
-                tDeckMeshCoreFlavor = tDeckMeshCoreFlavor
+                tDeckMeshCoreFlavor = tDeckMeshCoreFlavor,
+                preferBleOtaPackage = preferBleOtaPackage
             )
             for (cand in latestCandidates) {
                 try {
@@ -1027,7 +1038,7 @@ class GitHubFirmwareRepository {
                             board = board,
                             ecosystem = latestWeb.ecosystem,
                             meshCoreRole = meshCoreRole,
-                            preferFactoryImage = fullErase,
+                            preferFactoryImage = effectiveFullErase,
                             useMeshtasticMui = useMeshtasticMui,
                             onProgress = onProgress
                         )
@@ -1053,7 +1064,7 @@ class GitHubFirmwareRepository {
             board = board,
             release = effectiveRelease,
             meshCoreRole = meshCoreRole,
-            fullErase = fullErase,
+            fullErase = effectiveFullErase,
             useMeshtasticMui = useMeshtasticMui,
             tDeckMeshCoreFlavor = tDeckMeshCoreFlavor
         )
@@ -1062,14 +1073,14 @@ class GitHubFirmwareRepository {
             release = effectiveRelease,
             meshCoreRole = meshCoreRole,
             targetAssetName = expectedName,
-            includeBootloader = fullErase,
+            includeBootloader = effectiveFullErase,
             onProgress = onProgress
         )
         val sha = sha256Hex(fallbackBytes)
         val defaultOffset = when {
             board.mcu == McuArchitecture.NRF52840 -> 0x26000
             board.mcu == McuArchitecture.RP2040 -> 0x10000000
-            fullErase -> 0x0000
+            effectiveFullErase -> 0x0000
             else -> 0x10000
         }
         PreparedFirmwareImage(
@@ -1077,7 +1088,7 @@ class GitHubFirmwareRepository {
             sha256Hex = sha,
             flashOffset = defaultOffset,
             fileName = expectedName,
-            isFullFactoryImage = fullErase,
+            isFullFactoryImage = effectiveFullErase,
             isRealBinary = false
         )
     }
@@ -1236,7 +1247,8 @@ class GitHubFirmwareRepository {
         board: HardwareBoard,
         meshCoreRole: MeshCoreRole,
         useMeshtasticMui: Boolean = true,
-        tDeckMeshCoreFlavor: TDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE
+        tDeckMeshCoreFlavor: TDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE,
+        preferBleOtaPackage: Boolean = false
     ): List<FirmwareAsset> {
         val downloadable = release.assets.filter { asset ->
             if (!asset.downloadUrl.startsWith("https://")) return@filter false
@@ -1306,9 +1318,13 @@ class GitHubFirmwareRepository {
                 score += if (useMeshtasticMui && isTft) 35 else if (!useMeshtasticMui && isBase) 35 else -25
             }
             if (board.id == "lilygo_tdeck" && release.ecosystem == FirmwareEcosystem.MESHCORE) {
-                // Always prefer the full -merged.bin (0x0000 bootloader + partition table + app) for both WadaMesh and Ripple Ultra UI
                 val isMerged = lower.contains("-merged.bin") || lower.contains("_merged.bin")
-                if (isMerged) score += 45
+                if (preferBleOtaPackage) {
+                    // Over BLE OTA on ESP32-S3 T-Deck, prefer the non-merged app binary (0x10000)
+                    if (!isMerged && lower.endsWith(".bin")) score += 45
+                } else if (isMerged) {
+                    score += 45
+                }
                 if (lower.contains("-sd-") || lower.contains("_sd_")) score -= 20
                 if (tDeckMeshCoreFlavor == TDeckMeshCoreFlavor.WADAMESH && lower.startsWith("wadamesh-tdeck")) {
                     score += 35
@@ -1318,8 +1334,12 @@ class GitHubFirmwareRepository {
                 }
             } else if (release.ecosystem == FirmwareEcosystem.MESHCORE) {
                 score += scoreMeshCoreRoleMatch(lower, meshCoreRole)
-                // Prefer full -merged.bin on ESP32/S3/C3 so MeshCore's bootloader & partition table at 0x0000 are written
-                if (lower.contains("-merged.bin") || lower.contains("_merged.bin")) {
+                val isMerged = lower.contains("-merged.bin") || lower.contains("_merged.bin")
+                if (preferBleOtaPackage) {
+                    // Over BLE OTA on ESP32/S3/C3, prefer the clean 0x10000 app binary over -merged.bin
+                    if (!isMerged && lower.endsWith(".bin")) score += 35
+                } else if (isMerged) {
+                    // Over USB Serial on ESP32/S3/C3, prefer full -merged.bin so bootloader & partition table at 0x0000 are written
                     score += 35
                 }
                 // Board-specific variant preferences on MeshCore
@@ -1333,7 +1353,16 @@ class GitHubFirmwareRepository {
                     score += 20
                 }
             }
-            if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) {
+            if (board.mcu == McuArchitecture.NRF52840) {
+                if (preferBleOtaPackage) {
+                    // Over BLE DFU on nRF52840, prefer official Nordic/Adafruit DFU .zip package (.dat + .bin)
+                    if (lower.endsWith(".zip")) score += 35
+                    else if (lower.endsWith(".uf2")) score += 10
+                } else {
+                    if (lower.endsWith(".uf2")) score += 20
+                    else if (lower.endsWith(".zip")) score += 5
+                }
+            } else if (board.mcu == McuArchitecture.RP2040) {
                 if (lower.endsWith(".uf2")) score += 20
                 else if (lower.endsWith(".zip")) score += 5
             } else if (lower.endsWith(".bin")) {

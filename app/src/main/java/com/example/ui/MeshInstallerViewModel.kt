@@ -797,6 +797,9 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
         val prevBoardId = _uiState.value.selectedBoard.id
         usbManager.updateSelectedBoardHint(board)
         _uiState.update {
+            val matchingBle = it.bleDiscoveredNodes.firstOrNull { n -> n.matchedBoard?.id == board.id }
+                ?: it.selectedBleNode?.takeIf { n -> n.matchedBoard == null || n.matchedBoard.id == board.id }
+                ?: it.bleDiscoveredNodes.firstOrNull()
             it.copy(
                 selectedBoard = board,
                 selectedBaudRate = board.mcu.defaultBaudRate,
@@ -805,6 +808,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                 } else {
                     it.selectedTransport
                 },
+                selectedBleNode = matchingBle ?: it.selectedBleNode,
                 customFirmwareFile = if (prevBoardId != board.id) null else it.customFirmwareFile,
                 customFirmwareBytes = if (prevBoardId != board.id) null else it.customFirmwareBytes
             )
@@ -1185,6 +1189,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                     fullErase = snapshot.fullFlashErase,
                     useMeshtasticMui = snapshot.tDeckMeshtasticMui,
                     tDeckMeshCoreFlavor = snapshot.tDeckMeshCoreFlavor,
+                    preferBleOtaPackage = snapshot.selectedTransport == ConnectionTransport.BLE_DFU,
                     onProgress = { p, msg ->
                         appendLog(LogLevel.INFO, "BINARY", msg)
                         _uiState.update { s ->

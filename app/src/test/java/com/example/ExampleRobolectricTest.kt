@@ -627,6 +627,118 @@ class ExampleRobolectricTest {
         assertNotNull(state.selectedRelease)
         assertTrue(state.consoleLogs.any { it.message.contains("Mesh Installer initialized") })
     }
+
+    @Test
+    fun `verify ESP32 and nRF52 Bluetooth LE OTA payload preparation and flashing`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val logs = mutableListOf<String>()
+        val discoveredNodes = mutableListOf<com.example.model.BleDiscoveredNode>()
+        val ble = com.example.hardware.BleTransportManager(
+            context = app,
+            onLog = { _, tag, msg -> logs.add("[$tag] $msg") },
+            onNodesUpdated = { nodes ->
+                discoveredNodes.clear()
+                discoveredNodes.addAll(nodes)
+            }
+        )
+
+        // 1. Verify populateBenchBleNodes includes both ESP32 (Heltec V4, Heltec V3, T-Deck, Station G2) and nRF52 (T1000-E, RAK4631, T-Echo)
+        ble.populateBenchBleNodes()
+        assertTrue("Bench nodes must include Heltec V4", discoveredNodes.any { it.matchedBoard?.id == "heltec_v4" })
+        assertTrue("Bench nodes must include Heltec V3", discoveredNodes.any { it.matchedBoard?.id == "heltec_v3" })
+        assertTrue("Bench nodes must include SenseCAP T1000-E", discoveredNodes.any { it.matchedBoard?.id == "seeed_t1000e" })
+        assertTrue("Bench nodes must include RAK4631", discoveredNodes.any { it.matchedBoard?.id == "rak4631" })
+
+        // 2. Verify ESP32 factory/merged binary (0x0000 bootloader + 0x10000 app) is automatically sliced to clean 0x10000 OTA app image
+        val mergedEsp32 = ByteArray(0x10000 + 8192) { 0xFF.toByte() }
+        mergedEsp32[0] = 0xE9.toByte() // Bootloader magic at 0x0000
+        mergedEsp32[0x10000] = 0xE9.toByte() // App magic at 0x10000
+        // ESP_APP_DESC_MAGIC_WORD (0xABCD5432 in little-endian: 0x32, 0x54, 0xCD, 0xAB) at 0x10020
+        mergedEsp32[0x10020] = 0x32
+        mergedEsp32[0x10021] = 0x54
+        mergedEsp32[0x10022] = 0xCD.toByte()
+        mergedEsp32[0x10023] = 0xAB.toByte()
+
+        val slicedApp = ble.prepareEsp32OtaAppBinary(mergedEsp32)
+        assertEquals("Sliced ESP32 OTA binary must be exact 0x10000 app partition size", 8192, slicedApp.size)
+        assertEquals(0xE9.toByte(), slicedApp[0])
+        assertEquals(0x32.toByte(), slicedApp[0x20])
+        assertEquals(0xAB.toByte(), slicedApp[0x23])
+
+        // 3. Verify nRF52840 UF2 unwrapping strictly isolates S140 Application region [0x00026000, 0x000ED000)
+        val uf2TwoBlocks = ByteArray(1024)
+        fun writeLe32(buf: ByteArray, off: Int, v: Int) {
+            buf[off] = (v and 0xFF).toByte()
+            buf[off + 1] = ((v ushr 8) and 0xFF).toByte()
+            buf[off + 2] = ((v ushr 16) and 0xFF).toByte()
+            buf[off + 3] = ((v ushr 24) and 0xFF).toByte()
+        }
+        // Block 0 at 0x00001000 (SoftDevice region — should be excluded when 0x00026000 app blocks exist)
+        writeLe32(uf2TwoBlocks, 0, 0x0A324655)
+        writeLe32(uf2TwoBlocks, 4, 0x9E5D5157.toInt())
+        writeLe32(uf2TwoBlocks, 8, 0x00002000)
+        writeLe32(uf2TwoBlocks, 12, 0x00001000)
+        writeLe32(uf2TwoBlocks, 16, 256)
+        uf2TwoBlocks[32] = 0x11
+        // Block 1 at 0x00026000 (nRF52840 S140 Application start — must be extracted)
+        writeLe32(uf2TwoBlocks, 512 + 0, 0x0A324655)
+        writeLe32(uf2TwoBlocks, 512 + 4, 0x9E5D5157.toInt())
+        writeLe32(uf2TwoBlocks, 512 + 8, 0x00002000)
+        writeLe32(uf2TwoBlocks, 512 + 12, 0x00026000)
+        writeLe32(uf2TwoBlocks, 512 + 16, 256)
+        uf2TwoBlocks[512 + 32] = 0x77
+
+        val unwrappedNrfApp = ble.unwrapUf2IfPresent(uf2TwoBlocks)
+        assertEquals("UF2 unwrap must isolate the 256B application block at 0x26000", 256, unwrappedNrfApp.size)
+        assertEquals(0x77.toByte(), unwrappedNrfApp[0])
+
+        // 4. Verify Legacy & Secure nRF52 Init Packet builders and Meshtastic AdminMessage builders
+        val legacyDat = ble.buildLegacyNrf52InitPacket(unwrappedNrfApp)
+        assertEquals(14, legacyDat.size)
+        val secureDat = ble.buildSecureNrf52InitPacket(unwrappedNrfApp)
+        assertTrue(secureDat.size > 32)
+        val espAdminPkts = ble.buildMeshtasticAdminOtaPackets(isEsp32Family = true, targetNodeNum = 0x12345678)
+        assertEquals(3, espAdminPkts.size)
+        val nrfAdminPkts = ble.buildMeshtasticAdminOtaPackets(isEsp32Family = false, targetNodeNum = 0x12345678)
+        assertEquals(3, nrfAdminPkts.size)
+
+        // 5. Verify end-to-end BLE OTA flashing for both Heltec V4 (ESP32-S3) and SenseCAP T1000-E (nRF52840)
+        val heltecV4 = BoardCatalog.allBoards.first { it.id == "heltec_v4" }
+        val t1000e = BoardCatalog.allBoards.first { it.id == "seeed_t1000e" }
+
+        kotlinx.coroutines.runBlocking {
+            val heltecNode = discoveredNodes.first { it.matchedBoard?.id == "heltec_v4" }
+            val espCompletedPhases = mutableListOf<com.example.model.FlashPhase>()
+            val espOk = ble.flashFirmwareOverBleDfu(
+                targetNode = heltecNode,
+                board = heltecV4,
+                payload = mergedEsp32,
+                sha256Hex = "1234567890abcdef",
+                fullErase = true,
+                loopbackBench = true,
+                isRealBinary = true,
+                onProgress = { p -> espCompletedPhases.add(p.phase) }
+            )
+            assertTrue("ESP32-S3 Heltec V4 BLE OTA flash must succeed", espOk)
+            assertTrue(espCompletedPhases.contains(com.example.model.FlashPhase.COMPLETED))
+
+            ble.populateBenchBleNodes()
+            val t1000Node = discoveredNodes.first { it.matchedBoard?.id == "seeed_t1000e" }
+            val nrfCompletedPhases = mutableListOf<com.example.model.FlashPhase>()
+            val nrfOk = ble.flashFirmwareOverBleDfu(
+                targetNode = t1000Node,
+                board = t1000e,
+                payload = uf2TwoBlocks,
+                sha256Hex = "fedcba0987654321",
+                fullErase = false,
+                loopbackBench = true,
+                isRealBinary = true,
+                onProgress = { p -> nrfCompletedPhases.add(p.phase) }
+            )
+            assertTrue("nRF52840 SenseCAP T1000-E BLE DFU flash must succeed", nrfOk)
+            assertTrue(nrfCompletedPhases.contains(com.example.model.FlashPhase.COMPLETED))
+        }
+    }
 }
 
 
