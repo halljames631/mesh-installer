@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Espressif Native USB (Station G2, T-Beam Supreme, T-Deck, XIAO ESP32-S3, ESP32-C3) -->
+    <usb-device vendor-id="12346" />
+    <!-- Silicon Labs CP210x (Heltec V2/V3, LilyGO T-Beam, Station G1/G2 UART) -->
+    <usb-device vendor-id="4292" />
+    <!-- QinHeng CH340 / CH341 / CH9102 (LilyGO T-Beam, T-Lora, Nano G1) -->
+    <usb-device vendor-id="6790" />
+    <!-- Adafruit / nRF52840 UF2 Bootloader & Meshtastic TinyUSB CDC -->
+    <usb-device vendor-id="9114" />
+    <!-- Nordic Semiconductor nRF52 SDFU / USB CDC -->
+    <usb-device vendor-id="6421" />
+    <!-- Seeed Studio (SenseCAP T1000-E, Wio Tracker 1110, XIAO ESP32S3 / nRF52840) -->
+    <usb-device vendor-id="10374" />
+    <!-- Raspberry Pi RP2040 PICOBOOT / CDC -->
+    <usb-device vendor-id="11914" />
+    <!-- pid.codes Open Hardware USB VID -->
+    <usb-device vendor-id="4617" />
+    <!-- FTDI FT232 / FT231X -->
+    <usb-device vendor-id="1027" />
+</resources>

@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">Mesh Installer</string>
+    <string name="app_subtitle">ESP32 &amp; nRF52 Firmware Flasher for Meshtastic &amp; MeshCore</string>
+    <string name="nav_flasher">Flasher</string>
+    <string name="nav_boards">Hardware</string>
+    <string name="nav_releases">Firmware</string>
+    <string name="nav_console">Serial &amp; DFU</string>
+    <string name="ecosystem_meshtastic">Meshtastic</string>
+    <string name="ecosystem_meshcore">MeshCore</string>
+    <string name="transport_usb">USB OTG Serial</string>
+    <string name="transport_ble">Bluetooth LE DFU</string>
+    <string name="action_scan_usb">Rescan USB Bus</string>
+    <string name="action_scan_ble">Scan BLE Nodes</string>
+    <string name="action_start_flash">Flash Firmware</string>
+    <string name="action_enter_dfu">1200bps UF2 / DFU</string>
+    <string name="action_import_firmware">Custom .bin / .uf2 / .zip</string>
+    <string name="opt_full_erase">Full Flash Erase (Wipe NVS &amp; Keys)</string>
+    <string name="opt_bundle_webui">Install Web UI / LittleFS Partition</string>
+    <string name="opt_verify_hash">Verify SHA-256 &amp; Stub CRC32</string>
+</resources>
