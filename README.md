@@ -125,5 +125,8 @@ Mesh Installer follows strict least-privilege standards:
 
 ## 📄 License
 
-This project is licensed under the Apache License 2.0.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Third-party open-source components and acknowledgements are listed in the [NOTICE](NOTICE) file.
+
 Meshtastic® is a registered trademark of Meshtastic LLC. MeshCore is an independent open-source mesh networking project.
+
