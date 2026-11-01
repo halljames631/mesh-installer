@@ -271,6 +271,16 @@ object BoardCatalog {
         FlashPartition("LittleFS / WebUI", "0x300000", 2048, "littlefs.bin", isRequired = false)
     )
 
+    private val esp32S3Partitions16Mb = listOf(
+        FlashPartition("Bootloader", "0x0000", 64, "bootloader.bin"),
+        FlashPartition("Partition Table", "0x8000", 32, "partitions.bin"),
+        FlashPartition("NVS", "0x9000", 20, "nvs.bin"),
+        FlashPartition("OTA Data (boot_app0)", "0xE000", 8, "boot_app0.bin"),
+        FlashPartition("Application (App0)", "0x10000", 6400, "firmware.bin"),
+        FlashPartition("Application (App1)", "0x650000", 6400, "app1.bin", isRequired = false),
+        FlashPartition("SPIFFS / LittleFS", "0xC90000", 3456, "littlefs.bin", isRequired = false)
+    )
+
     private val esp32Partitions4Mb = listOf(
         FlashPartition("Bootloader", "0x1000", 64, "bootloader.bin"),
         FlashPartition("Partition Table", "0x8000", 32, "partitions.bin"),
@@ -509,12 +519,12 @@ object BoardCatalog {
             productId = 4097,
             flashSizeMb = 16,
             psramMb = 8,
-            hasOled = true,
+            hasOled = false,
             hasEInk = false,
             hasGps = true,
-            meshtasticTarget = "t-deck",
+            meshtasticTarget = "t-deck-tft",
             meshCoreTarget = "LilyGo_TDeck",
-            partitions = esp32S3Partitions8Mb,
+            partitions = esp32S3Partitions16Mb,
             bootloaderGuide = "Turn power switch OFF, press and hold the trackball center button, turn power switch ON, then release trackball.",
             pinoutSummary = "Standalone QWERTY Handheld | 2.8\" IPS Touch LCD | ESP32-S3 + C3 Keyboard Controller"
         ),

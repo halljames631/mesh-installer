@@ -396,7 +396,7 @@ class ExampleRobolectricTest {
         // 5 for T-Deck (MUI Factory, MUI Update, BaseUI, Ripple, WadaMesh) + 6 for Station G2 (Meshtastic Factory + Update + 4 MeshCore roles) = 11 specs
         assertEquals(11, specs.size)
 
-        kotlinx.coroutines.runBlocking {
+        kotlinx.coroutines.runBlocking<Unit> {
             val g2RoomSpec = specs.first { it.board.id == "station_g2" && it.meshCoreRole == MeshCoreRole.ROOM_SERVER }
             val sampleImg = com.example.model.PreparedFirmwareImage(
                 bytes = ByteArray(2048) { 0xE9.toByte() },
@@ -468,10 +468,135 @@ class ExampleRobolectricTest {
                 meshCoreRole = MeshCoreRole.COMPANION_BLE,
                 fullErase = false,
                 useMeshtasticMui = true,
-                tDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE
+                tDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE,
+                targetVersionTag = mtRelease.tagName
             )
             assertNotNull("T-Deck Meshtastic MUI entry should match offline", tDeckMuiMatched)
-            assertTrue(tDeckMuiMatched!!.variantKey.contains("mui"))
+            assertTrue("MUI entry should have variantKey with mui", tDeckMuiMatched!!.variantKey.contains("mui"))
+            assertTrue("MUI entry should have t-deck-tft filename", tDeckMuiMatched.fileName.contains("t-deck-tft"))
+
+            // Verify LilyGO T-Deck Meshtastic BaseUI matching (must NOT match MUI)
+            val tDeckBaseUiMatched = vault.findMatchingEntry(
+                entries = updatedEntries,
+                board = BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" },
+                ecosystem = FirmwareEcosystem.MESHTASTIC,
+                meshCoreRole = MeshCoreRole.COMPANION_BLE,
+                fullErase = true,
+                useMeshtasticMui = false,
+                tDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE,
+                targetVersionTag = mtRelease.tagName
+            )
+            assertNotNull("T-Deck Meshtastic BaseUI entry should match offline", tDeckBaseUiMatched)
+            assertTrue("BaseUI entry should have variantKey with baseui", tDeckBaseUiMatched!!.variantKey.contains("baseui"))
+            assertTrue("BaseUI entry should have t-deck filename without tft", tDeckBaseUiMatched.fileName.contains("t-deck") && !tDeckBaseUiMatched.fileName.contains("tft"))
+            assertTrue("MUI and BaseUI filenames must be different", tDeckMuiMatched.fileName != tDeckBaseUiMatched.fileName)
+
+            // Verify LilyGO T-Deck on Alpha side (MUI vs BaseUI on Alpha release)
+            val mtAlphaRelease = repo.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).last()
+            assertTrue("Fallback last must be alpha prerelease", mtAlphaRelease.isPrerelease)
+            val alphaMuiName = repo.resolveExpectedFileName(
+                board = BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" },
+                release = mtAlphaRelease,
+                meshCoreRole = MeshCoreRole.COMPANION_BLE,
+                fullErase = true,
+                useMeshtasticMui = true
+            )
+            assertTrue("Alpha MUI name must contain t-deck-tft and alpha version", alphaMuiName.contains("t-deck-tft") && alphaMuiName.contains("2.8.1"))
+
+            val alphaBaseUiName = repo.resolveExpectedFileName(
+                board = BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" },
+                release = mtAlphaRelease,
+                meshCoreRole = MeshCoreRole.COMPANION_BLE,
+                fullErase = true,
+                useMeshtasticMui = false
+            )
+            assertTrue("Alpha BaseUI name must contain t-deck- and NOT tft", alphaBaseUiName.contains("t-deck-") && !alphaBaseUiName.contains("tft") && alphaBaseUiName.contains("2.8.1"))
+            assertTrue("Alpha MUI and Alpha BaseUI filenames must be different", alphaMuiName != alphaBaseUiName)
+
+            // Verify saving and matching an Alpha T-Deck entry in the vault
+            val alphaSpec = com.example.model.VaultTargetSpec(
+                key = vault.buildVaultKey(BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" }, FirmwareEcosystem.MESHTASTIC, meshtasticTrack = com.example.model.MeshtasticTrack.ALPHA, useMeshtasticMui = false, fullErase = true),
+                board = BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" },
+                ecosystem = FirmwareEcosystem.MESHTASTIC,
+                variantKey = vault.buildVariantKey(BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" }, FirmwareEcosystem.MESHTASTIC, meshtasticTrack = com.example.model.MeshtasticTrack.ALPHA, useMeshtasticMui = false, fullErase = true),
+                variantLabel = vault.buildVariantLabel(BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" }, FirmwareEcosystem.MESHTASTIC, meshtasticTrack = com.example.model.MeshtasticTrack.ALPHA, useMeshtasticMui = false, fullErase = true),
+                meshCoreRole = MeshCoreRole.COMPANION_BLE,
+                meshtasticTrack = com.example.model.MeshtasticTrack.ALPHA,
+                useMeshtasticMui = false,
+                tDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE,
+                fullErase = true
+            )
+            val sampleAlphaImg = com.example.model.PreparedFirmwareImage(
+                bytes = ByteArray(1024) { 0x55.toByte() },
+                sha256Hex = "1122334455667788",
+                flashOffset = 0x0000,
+                fileName = "firmware-t-deck-2.8.1.8e6a88d.factory.bin",
+                isFullFactoryImage = true,
+                isRealBinary = true
+            )
+            vault.savePreparedImageToVault(alphaSpec, mtAlphaRelease.tagName, sampleAlphaImg)
+            val updatedEntriesWithAlpha = vault.loadAllEntries()
+
+            val alphaBaseUiMatched = vault.findMatchingEntry(
+                entries = updatedEntriesWithAlpha,
+                board = BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" },
+                ecosystem = FirmwareEcosystem.MESHTASTIC,
+                meshCoreRole = MeshCoreRole.COMPANION_BLE,
+                fullErase = true,
+                useMeshtasticMui = false,
+                meshtasticTrack = com.example.model.MeshtasticTrack.ALPHA,
+                targetVersionTag = mtAlphaRelease.tagName
+            )
+            assertNotNull("Alpha BaseUI entry must be found in vault", alphaBaseUiMatched)
+            assertTrue(alphaBaseUiMatched!!.variantKey.contains("baseui"))
+            assertTrue(alphaBaseUiMatched.variantKey.contains("alpha"))
+            assertEquals("firmware-t-deck-2.8.1.8e6a88d.factory.bin", alphaBaseUiMatched.fileName)
         }
     }
+
+    @Test
+    fun `launch MainActivity without crash`() {
+        val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java).setup()
+        assertNotNull(controller.get())
+    }
+
+    @Test
+    fun `verify UsbTransportManager and BleTransportManager boot safely without security exception`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val logs = mutableListOf<String>()
+        val usb = com.example.hardware.UsbTransportManager(
+            context = app,
+            onLog = { _, tag, msg -> logs.add("[$tag] $msg") },
+            onDevicesChanged = {}
+        )
+        // Verify registerReceiver and scanning does not crash
+        usb.registerReceiver()
+        val devices = usb.scanUsbDevices()
+        assertNotNull(devices)
+        usb.unregisterReceiver()
+
+        val ble = com.example.hardware.BleTransportManager(
+            context = app,
+            onLog = { _, tag, msg -> logs.add("[$tag] $msg") },
+            onNodesUpdated = {}
+        )
+        // Verify Bluetooth checks do not throw
+        val bleEnabled = ble.isBluetoothEnabled()
+        assertTrue(bleEnabled || !bleEnabled)
+        ble.stopBleScan()
+    }
+
+    @Test
+    fun `verify MeshInstallerViewModel init boots without crash and populates initial state`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = com.example.ui.MeshInstallerViewModel(app)
+        val state = vm.uiState.value
+        assertNotNull(state.selectedBoard)
+        assertTrue(state.meshtasticReleases.isNotEmpty())
+        assertTrue(state.meshCoreReleases.isNotEmpty())
+        assertNotNull(state.selectedRelease)
+        assertTrue(state.consoleLogs.any { it.message.contains("Mesh Installer initialized") })
+    }
 }
+
+

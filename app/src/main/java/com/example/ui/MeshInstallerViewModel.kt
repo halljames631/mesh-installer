@@ -140,10 +140,22 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
             "BOOT",
             "Mesh Installer initialized • Supports esptool SLIP (ESP32/S3/C3 incl. Station G2), Adafruit UF2 & Nordic Secure DFU (nRF52840)."
         )
-        usbManager.updateSelectedBoardHint(_uiState.value.selectedBoard)
-        usbManager.registerReceiver()
-        loadVaultEntriesFromDisk()
-        refreshFirmwareCatalog()
+        try {
+            usbManager.updateSelectedBoardHint(_uiState.value.selectedBoard)
+            usbManager.registerReceiver()
+        } catch (e: Exception) {
+            appendLog(LogLevel.WARN, "USB-BOOT", "USB service initialization deferred: ${e.message}")
+        }
+        try {
+            loadVaultEntriesFromDisk()
+        } catch (e: Exception) {
+            appendLog(LogLevel.WARN, "VAULT-BOOT", "Could not load cached vault: ${e.message}")
+        }
+        try {
+            refreshFirmwareCatalog()
+        } catch (e: Exception) {
+            appendLog(LogLevel.WARN, "NET-BOOT", "Firmware catalog refresh deferred: ${e.message}")
+        }
     }
 
     override fun onCleared() {
@@ -448,9 +460,14 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
         val snapshot = _uiState.value
         val release = if (snapshot.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
             snapshot.selectedRelease?.takeIf { it.ecosystem == FirmwareEcosystem.MESHTASTIC }
-                ?: snapshot.meshtasticReleases.firstOrNull { !it.isPrerelease }
-                ?: snapshot.meshtasticReleases.firstOrNull()
-                ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first()
+                ?: if (snapshot.selectedMeshtasticTrack == MeshtasticTrack.ALPHA) {
+                    snapshot.meshtasticReleases.firstOrNull { it.isPrerelease }
+                        ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).last()
+                } else {
+                    snapshot.meshtasticReleases.firstOrNull { !it.isPrerelease }
+                        ?: snapshot.meshtasticReleases.firstOrNull()
+                        ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first()
+                }
         } else {
             snapshot.selectedRelease?.takeIf { it.ecosystem == FirmwareEcosystem.MESHCORE }
                 ?: snapshot.meshCoreReleases.firstOrNull()
@@ -618,8 +635,10 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
             }
             val activeRelease = if (ecosystem == FirmwareEcosystem.MESHTASTIC) {
                 when (state.selectedMeshtasticTrack) {
-                    MeshtasticTrack.STABLE -> releases.firstOrNull { !it.isPrerelease } ?: releases.firstOrNull()
-                    MeshtasticTrack.ALPHA -> releases.firstOrNull { it.isPrerelease } ?: releases.firstOrNull()
+                    MeshtasticTrack.STABLE -> releases.firstOrNull { !it.isPrerelease }
+                        ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first()
+                    MeshtasticTrack.ALPHA -> releases.firstOrNull { it.isPrerelease }
+                        ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).last()
                     MeshtasticTrack.CUSTOM -> releases.firstOrNull()
                 }
             } else {
@@ -659,10 +678,11 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
             )
         }
         val current = _uiState.value
+        val expectedFile = expectedFirmwareFileName()
         appendLog(
             LogLevel.INFO,
             "TRACK",
-            "Switched Meshtastic track to ${track.label} (Version: ${current.selectedRelease?.tagName ?: "None"})"
+            "Switched Meshtastic track to ${track.label} (Version: ${current.selectedRelease?.tagName ?: "None"}) -> Target: $expectedFile"
         )
     }
 
@@ -726,11 +746,12 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                 customFirmwareBytes = null
             )
         }
+        val targetFile = expectedFirmwareFileName()
         appendLog(
             LogLevel.INFO,
             "T-DECK",
-            if (enabled) "Enabled Meshtastic UI (MUI / t-deck-tft) for LilyGO T-Deck."
-            else "Selected classic Meshtastic BaseUI (t-deck) for LilyGO T-Deck."
+            if (enabled) "Enabled Meshtastic UI (MUI / t-deck-tft) for LilyGO T-Deck -> Target: $targetFile"
+            else "Selected classic Meshtastic BaseUI (t-deck) for LilyGO T-Deck -> Target: $targetFile"
         )
     }
 
@@ -919,8 +940,10 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                 val mcList = mcResult.getOrDefault(state.meshCoreReleases)
                 val newSelectedRelease = if (state.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
                     when (state.selectedMeshtasticTrack) {
-                        MeshtasticTrack.STABLE -> mtList.firstOrNull { !it.isPrerelease } ?: mtList.firstOrNull()
-                        MeshtasticTrack.ALPHA -> mtList.firstOrNull { it.isPrerelease } ?: mtList.firstOrNull()
+                        MeshtasticTrack.STABLE -> mtList.firstOrNull { !it.isPrerelease }
+                            ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first()
+                        MeshtasticTrack.ALPHA -> mtList.firstOrNull { it.isPrerelease }
+                            ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).last()
                         MeshtasticTrack.CUSTOM -> state.selectedRelease
                     }
                 } else {
@@ -1035,9 +1058,14 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
 
         val release = if (snapshot.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
             snapshot.selectedRelease?.takeIf { it.ecosystem == FirmwareEcosystem.MESHTASTIC }
-                ?: snapshot.meshtasticReleases.firstOrNull { !it.isPrerelease }
-                ?: snapshot.meshtasticReleases.firstOrNull()
-                ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first()
+                ?: if (snapshot.selectedMeshtasticTrack == MeshtasticTrack.ALPHA) {
+                    snapshot.meshtasticReleases.firstOrNull { it.isPrerelease }
+                        ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).last()
+                } else {
+                    snapshot.meshtasticReleases.firstOrNull { !it.isPrerelease }
+                        ?: snapshot.meshtasticReleases.firstOrNull()
+                        ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first()
+                }
         } else {
             snapshot.selectedRelease?.takeIf { it.ecosystem == FirmwareEcosystem.MESHCORE }
                 ?: snapshot.meshCoreReleases.firstOrNull()
@@ -1076,7 +1104,18 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                 meshtasticTrack = snapshot.selectedMeshtasticTrack,
                 targetVersionTag = release.tagName
             )
+            val isMatchingVariant = if (cachedEntry != null && snapshot.selectedBoard.id == "lilygo_tdeck" && snapshot.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
+                val trackPart = if (snapshot.selectedMeshtasticTrack == MeshtasticTrack.ALPHA) "alpha" else "stable"
+                val prefix = if (snapshot.tDeckMeshtasticMui) "mt_tdeck_mui_$trackPart" else "mt_tdeck_baseui_$trackPart"
+                val basePrefix = if (snapshot.tDeckMeshtasticMui) "mt_tdeck_mui" else "mt_tdeck_baseui"
+                cachedEntry.variantKey.startsWith(prefix) || (
+                    cachedEntry.variantKey.startsWith(basePrefix) && cachedEntry.versionTag == release.tagName
+                )
+            } else {
+                true
+            }
             val canUseCachedEntry = cachedEntry != null &&
+                isMatchingVariant &&
                 (snapshot.selectedRelease == null || snapshot.selectedRelease?.tagName == cachedEntry.versionTag) &&
                 (cachedEntry.isRealBinary || snapshot.loopbackTestBench)
             val cachedImage = if (customBytes == null && canUseCachedEntry && cachedEntry != null) {
@@ -1234,7 +1273,19 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
         state.customFirmwareFile?.let { return it.displayName }
         val offline = currentSelectionOfflineEntry()
         if (offline != null && (state.selectedRelease == null || state.selectedRelease?.tagName == offline.versionTag)) {
-            return offline.fileName
+            val isMatchingVariant = if (state.selectedBoard.id == "lilygo_tdeck" && state.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
+                val trackPart = if (state.selectedMeshtasticTrack == MeshtasticTrack.ALPHA) "alpha" else "stable"
+                val prefix = if (state.tDeckMeshtasticMui) "mt_tdeck_mui_$trackPart" else "mt_tdeck_baseui_$trackPart"
+                val basePrefix = if (state.tDeckMeshtasticMui) "mt_tdeck_mui" else "mt_tdeck_baseui"
+                offline.variantKey.startsWith(prefix) || (
+                    offline.variantKey.startsWith(basePrefix) && offline.versionTag == state.selectedRelease?.tagName
+                )
+            } else {
+                true
+            }
+            if (isMatchingVariant) {
+                return offline.fileName
+            }
         }
         val rel = state.selectedRelease ?: return "firmware.bin"
         return repository.resolveExpectedFileName(

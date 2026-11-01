@@ -107,7 +107,10 @@ class GitHubFirmwareRepository {
             repo = "firmware",
             ecosystem = FirmwareEcosystem.MESHTASTIC
         )
-        if (webRelease != null) return listOf(webRelease)
+        if (webRelease != null) {
+            val alphaFallback = curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).lastOrNull()
+            return listOfNotNull(webRelease, alphaFallback)
+        }
 
         return emptyList()
     }
@@ -623,6 +626,7 @@ class GitHubFirmwareRepository {
             val req = Request.Builder()
                 .url("https://api.meshtastic.org/github/firmware/list")
                 .header("Accept", "application/json")
+                .header("User-Agent", "MeshInstaller-Android")
                 .build()
             okHttpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return emptyList()
@@ -633,7 +637,7 @@ class GitHubFirmwareRepository {
 
                 fun parseChannel(arr: JSONArray?, isPrerelease: Boolean) {
                     if (arr == null) return
-                    for (i in 0 until minOf(arr.length(), 5)) {
+                    for (i in 0 until minOf(arr.length(), 10)) {
                         val item = arr.getJSONObject(i)
                         val tag = item.optString("id", "")
                         if (tag.isBlank()) continue
@@ -646,7 +650,7 @@ class GitHubFirmwareRepository {
                                 id = "mt-api-$tag",
                                 tagName = tag,
                                 title = title,
-                                publishedDate = "Official",
+                                publishedDate = if (isPrerelease) "Alpha Preview" else "Production Beta / Stable",
                                 ecosystem = FirmwareEcosystem.MESHTASTIC,
                                 isPrerelease = isPrerelease,
                                 changelog = notes,
@@ -826,9 +830,12 @@ class GitHubFirmwareRepository {
             } else {
                 fetchReleases(release.ecosystem).getOrNull().orEmpty()
             }
-            val matchedLive = liveList.firstOrNull { !it.id.startsWith("fallback-") && it.isPrerelease == release.isPrerelease }
-                ?: liveList.firstOrNull { !it.id.startsWith("fallback-") }
-                ?: liveList.firstOrNull()
+            val matchedLive = if (release.isPrerelease) {
+                liveList.firstOrNull { !it.id.startsWith("fallback-") && it.isPrerelease }
+            } else {
+                liveList.firstOrNull { !it.id.startsWith("fallback-") && !it.isPrerelease }
+                    ?: liveList.firstOrNull { !it.id.startsWith("fallback-") }
+            }
             if (matchedLive != null) {
                 effectiveRelease = matchedLive
                 onProgress(0.18f, "Resolved $variantDesc release ${effectiveRelease.tagName}")
@@ -1082,9 +1089,12 @@ class GitHubFirmwareRepository {
             } else {
                 releaseCache[release.ecosystem] ?: fetchReleases(release.ecosystem).getOrNull().orEmpty()
             }
-            val matchedLive = liveList.firstOrNull { !it.id.startsWith("fallback-") && it.isPrerelease == release.isPrerelease }
-                ?: liveList.firstOrNull { !it.id.startsWith("fallback-") }
-                ?: liveList.firstOrNull()
+            val matchedLive = if (release.isPrerelease) {
+                liveList.firstOrNull { !it.id.startsWith("fallback-") && it.isPrerelease }
+            } else {
+                liveList.firstOrNull { !it.id.startsWith("fallback-") && !it.isPrerelease }
+                    ?: liveList.firstOrNull { !it.id.startsWith("fallback-") }
+            }
             if (matchedLive != null) {
                 effectiveRelease = matchedLive
             }
@@ -1260,8 +1270,9 @@ class GitHubFirmwareRepository {
             val lower = asset.fileName.lowercase(Locale.US)
             var score = 10
             if (board.id == "lilygo_tdeck" && release.ecosystem == FirmwareEcosystem.MESHTASTIC) {
-                val isMuiAsset = lower.contains("tft") || lower.contains("mui")
-                score += if (useMeshtasticMui == isMuiAsset) 25 else -15
+                val isTft = lower.contains("t-deck-tft") || lower.contains("tft") || lower.contains("mui")
+                val isBase = lower.contains("t-deck") && !lower.contains("tft") && !lower.contains("pro")
+                score += if (useMeshtasticMui && isTft) 35 else if (!useMeshtasticMui && isBase) 35 else -25
             }
             if (board.id == "lilygo_tdeck" && release.ecosystem == FirmwareEcosystem.MESHCORE) {
                 // Always prefer the full -merged.bin (0x0000 bootloader + partition table + app) for both WadaMesh and Ripple Ultra UI
@@ -1668,8 +1679,10 @@ class GitHubFirmwareRepository {
         // For LilyGO T-Deck on Meshtastic, filter for t-deck-tft (Meshtastic UI / MUI) vs standard t-deck (BaseUI)
         val matchingEntries = if (board.id == "lilygo_tdeck" && ecosystem == FirmwareEcosystem.MESHTASTIC) {
             val muiFiltered = allBoardEntries.filter { e ->
-                val isMui = e.fileName.contains("tft", ignoreCase = true) || e.fileName.contains("mui", ignoreCase = true)
-                isMui == useMeshtasticMui
+                val lower = e.fileName.lowercase(Locale.US)
+                val isTft = lower.contains("t-deck-tft") || lower.contains("tft") || lower.contains("mui")
+                val isBase = lower.contains("t-deck") && !lower.contains("tft") && !lower.contains("pro")
+                if (useMeshtasticMui) isTft else isBase
             }
             muiFiltered.ifEmpty { allBoardEntries }
         } else {
@@ -1795,8 +1808,9 @@ class GitHubFirmwareRepository {
                     ) {
                         val matchesBoard = matchesBoardStrictly(board, lower)
                         val matchesTDeckUiMode = if (board.id == "lilygo_tdeck" && ecosystem == FirmwareEcosystem.MESHTASTIC) {
-                            val isMui = lower.contains("tft") || lower.contains("mui")
-                            isMui == useMeshtasticMui
+                            val isTft = lower.contains("t-deck-tft") || lower.contains("tft") || lower.contains("mui")
+                            val isBase = lower.contains("t-deck") && !lower.contains("tft") && !lower.contains("pro")
+                            if (useMeshtasticMui) isTft else isBase
                         } else {
                             true
                         }
@@ -2000,6 +2014,7 @@ class GitHubFirmwareRepository {
                 val ver = release.tagName.removePrefix("v")
                 val targetName = when {
                     board.id == "lilygo_tdeck" && useMeshtasticMui -> "t-deck-tft"
+                    board.id == "lilygo_tdeck" && !useMeshtasticMui -> "t-deck"
                     board.id == "rpi_pico_waveshare" -> "pico"
                     else -> board.meshtasticTarget
                 }

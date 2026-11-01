@@ -144,14 +144,22 @@ class UsbTransportManager(
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        ContextCompat.registerReceiver(
-            context,
-            usbReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        receiverRegistered = true
-        scanUsbDevices(currentlySelectedBoardHint)
+        try {
+            ContextCompat.registerReceiver(
+                context,
+                usbReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            receiverRegistered = true
+        } catch (e: Exception) {
+            onLog(LogLevel.WARN, "USB-HOST", "Could not register USB broadcast receiver: ${e.message}")
+        }
+        try {
+            scanUsbDevices(currentlySelectedBoardHint)
+        } catch (e: Exception) {
+            onLog(LogLevel.WARN, "USB-HOST", "Error scanning USB devices on boot: ${e.message}")
+        }
     }
 
     fun unregisterReceiver() {
@@ -170,26 +178,36 @@ class UsbTransportManager(
             currentlySelectedBoardHint = selectedBoardHint
         }
         val manager = usbManager ?: return emptyList()
-        val rawDevices = manager.deviceList?.values?.toList().orEmpty()
+        val rawDevices = try {
+            manager.deviceList?.values?.toList().orEmpty()
+        } catch (e: Exception) {
+            onLog(LogLevel.WARN, "USB-HOST", "Could not query USB device list: ${e.message}")
+            emptyList()
+        }
         val attachedList = rawDevices.map { dev ->
+            val hasPerm = try {
+                manager.hasPermission(dev)
+            } catch (_: Exception) {
+                false
+            }
+            val prodName = if (hasPerm) dev.safeProductName else null
+            val mfgName = if (hasPerm) dev.safeManufacturerName else null
+            val serial = if (hasPerm) dev.safeSerialNumber else null
+
             val matched = BoardCatalog.matchByUsbVidPid(
                 vendorId = dev.vendorId,
                 productId = dev.productId,
-                productName = dev.productName,
+                productName = prodName,
                 currentlySelectedBoard = currentlySelectedBoardHint
             )
             UsbAttachedBoard(
                 deviceName = dev.deviceName,
                 vendorId = dev.vendorId,
                 productId = dev.productId,
-                manufacturerName = dev.manufacturerName ?: usbVendorLabel(dev.vendorId),
-                productName = dev.productName ?: matched?.name ?: "USB UART / CDC Device",
-                serialNumber = try {
-                    if (manager.hasPermission(dev)) dev.serialNumber else null
-                } catch (_: SecurityException) {
-                    null
-                },
-                hasPermission = manager.hasPermission(dev),
+                manufacturerName = mfgName ?: usbVendorLabel(dev.vendorId),
+                productName = prodName ?: matched?.name ?: "USB Serial (VID:0x%04X PID:0x%04X)".format(dev.vendorId, dev.productId),
+                serialNumber = serial,
+                hasPermission = hasPerm,
                 matchedBoard = matched
             )
         }
@@ -200,8 +218,13 @@ class UsbTransportManager(
     fun requestPermission(deviceName: String) {
         val manager = usbManager ?: return
         val device = manager.deviceList?.get(deviceName) ?: return
-        if (manager.hasPermission(device)) {
-            onLog(LogLevel.INFO, "USB-HOST", "Already holds USB permission for ${device.productName ?: device.deviceName}")
+        val hasPerm = try {
+            manager.hasPermission(device)
+        } catch (_: Exception) {
+            false
+        }
+        if (hasPerm) {
+            onLog(LogLevel.INFO, "USB-HOST", "Already holds USB permission for ${device.safeProductName ?: device.deviceName}")
             scanUsbDevices(currentlySelectedBoardHint)
             return
         }
@@ -383,21 +406,23 @@ class UsbTransportManager(
 
                 session = openUsbSerialSession(device)
                 if (session == null) {
-                    onLog(LogLevel.ERROR, "USB-FLASH", "Failed to claim USB CDC/Bulk endpoints on ${device.productName}.")
+                    val dName = device.safeProductName ?: device.deviceName
+                    onLog(LogLevel.ERROR, "USB-FLASH", "Failed to claim USB CDC/Bulk endpoints on $dName.")
                     onProgress(
                         FlashProgressState(
                             phase = FlashPhase.FAILED,
-                            errorMessage = "Could not claim USB Serial interface on ${device.productName}. Check OTG adapter or re-plug board."
+                            errorMessage = "Could not claim USB Serial interface on $dName. Check OTG adapter or re-plug board."
                         )
                     )
                     return@withContext false
                 }
 
                 configureUsbBaudRate(session, baudRate)
+                val devLabel = device.safeProductName ?: device.deviceName
                 onLog(
                     LogLevel.INFO,
                     "USB-OTG",
-                    "Opened USB Data Interface #${session.dataInterface.id} (Ctrl #${session.controlInterfaceId}) on ${device.productName} @ $baudRate bps"
+                    "Opened USB Data Interface #${session.dataInterface.id} (Ctrl #${session.controlInterfaceId}) on $devLabel @ $baudRate bps"
                 )
             } else if (!loopbackBench) {
                 onLog(LogLevel.ERROR, "USB-FLASH", "No physical USB OTG board detected. Connect ${board.name} via USB-C OTG.")
@@ -489,7 +514,7 @@ class UsbTransportManager(
         onLog(
             LogLevel.TX,
             "ESP-RST",
-            "Triggering ${board.mcu.shortName} auto-download reset on ${currentSession.device.productName ?: board.name}..."
+            "Triggering ${board.mcu.shortName} auto-download reset on ${currentSession.device.safeProductName ?: board.name}..."
         )
         performEspBootloaderResetOnSession(currentSession)
 
@@ -1405,3 +1430,13 @@ class UsbTransportManager(
         else -> "VID 0x%04X".format(vendorId)
     }
 }
+
+val UsbDevice.safeProductName: String?
+    get() = runCatching { productName }.getOrNull()
+
+val UsbDevice.safeManufacturerName: String?
+    get() = runCatching { manufacturerName }.getOrNull()
+
+val UsbDevice.safeSerialNumber: String?
+    get() = runCatching { serialNumber }.getOrNull()
+

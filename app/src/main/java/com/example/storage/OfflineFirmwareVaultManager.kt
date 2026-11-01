@@ -201,7 +201,7 @@ class OfflineFirmwareVaultManager(context: Context) {
         val specs = mutableListOf<VaultTargetSpec>()
         for (board in boards) {
             if (board.id == "lilygo_tdeck") {
-                // 1. T-Deck Meshtastic UI (MUI) • Full Factory
+                // 1. T-Deck Meshtastic UI (MUI / t-deck-tft) • Full Factory
                 specs.add(
                     createSpec(
                         board = board,
@@ -210,7 +210,7 @@ class OfflineFirmwareVaultManager(context: Context) {
                         fullErase = true
                     )
                 )
-                // 2. T-Deck Meshtastic UI (MUI) • Update
+                // 2. T-Deck Meshtastic UI (MUI / t-deck-tft) • Update
                 specs.add(
                     createSpec(
                         board = board,
@@ -219,7 +219,7 @@ class OfflineFirmwareVaultManager(context: Context) {
                         fullErase = false
                     )
                 )
-                // 3. T-Deck Meshtastic BaseUI • Full Factory
+                // 3. T-Deck Meshtastic BaseUI (t-deck) • Full Factory
                 specs.add(
                     createSpec(
                         board = board,
@@ -354,19 +354,59 @@ class OfflineFirmwareVaultManager(context: Context) {
         meshtasticTrack: MeshtasticTrack = MeshtasticTrack.STABLE,
         targetVersionTag: String? = null
     ): CachedFirmwareEntry? {
-        // If targetVersionTag explicitly matches a cached entry for this board & ecosystem, return it
+        val expectedVariantKey = buildVariantKey(
+            board = board,
+            ecosystem = ecosystem,
+            meshCoreRole = meshCoreRole,
+            fullErase = fullErase,
+            useMeshtasticMui = useMeshtasticMui,
+            tDeckMeshCoreFlavor = tDeckMeshCoreFlavor,
+            meshtasticTrack = meshtasticTrack
+        )
+        val exactKey = "${board.id}:${ecosystem.name}:$expectedVariantKey"
+
+        // 1. If targetVersionTag is specified, check for exact match with that versionTag AND variantKey
         if (!targetVersionTag.isNullOrBlank()) {
             entries.firstOrNull {
-                it.boardId == board.id &&
-                    it.ecosystem == ecosystem &&
+                it.key == exactKey &&
                     it.versionTag.equals(targetVersionTag, ignoreCase = true) &&
                     resolveFile(it.localFilePath).exists()
             }?.let { return it }
+
+            entries.firstOrNull {
+                it.boardId == board.id &&
+                    it.ecosystem == ecosystem &&
+                    it.variantKey == expectedVariantKey &&
+                    it.versionTag.equals(targetVersionTag, ignoreCase = true) &&
+                    resolveFile(it.localFilePath).exists()
+            }?.let { return it }
+
+            // For T-Deck on Meshtastic, ensure MUI vs BaseUI and track (Alpha vs Stable) are strictly partitioned
+            if (board.id == "lilygo_tdeck" && ecosystem == FirmwareEcosystem.MESHTASTIC) {
+                val trackPart = if (meshtasticTrack == MeshtasticTrack.ALPHA) "alpha" else "stable"
+                val prefix = if (useMeshtasticMui) "mt_tdeck_mui_$trackPart" else "mt_tdeck_baseui_$trackPart"
+                val legacyPrefix = if (useMeshtasticMui) "mt_tdeck_mui" else "mt_tdeck_baseui"
+                entries.firstOrNull {
+                    it.boardId == board.id &&
+                        it.ecosystem == ecosystem &&
+                        it.variantKey.startsWith(prefix) &&
+                        it.versionTag.equals(targetVersionTag, ignoreCase = true) &&
+                        resolveFile(it.localFilePath).exists()
+                }?.let { return it }
+                entries.firstOrNull {
+                    it.boardId == board.id &&
+                        it.ecosystem == ecosystem &&
+                        it.variantKey.startsWith(legacyPrefix) &&
+                        it.versionTag.equals(targetVersionTag, ignoreCase = true) &&
+                        resolveFile(it.localFilePath).exists()
+                }?.let { return it }
+            }
         }
 
-        val exactKey = buildVaultKey(board, ecosystem, meshCoreRole, fullErase, useMeshtasticMui, tDeckMeshCoreFlavor, meshtasticTrack)
+        // 2. Exact key match (matches board, ecosystem, role/mui, fullErase, track)
         entries.firstOrNull { it.key == exactKey && resolveFile(it.localFilePath).exists() }?.let { return it }
 
+        // 3. Fallback matching respecting variant constraints
         if (ecosystem == FirmwareEcosystem.MESHTASTIC) {
             val isAlpha = meshtasticTrack == MeshtasticTrack.ALPHA
             fun isMatchingTrack(entry: CachedFirmwareEntry): Boolean {
@@ -376,16 +416,52 @@ class OfflineFirmwareVaultManager(context: Context) {
             }
 
             if (board.id == "lilygo_tdeck") {
-                val prefix = if (useMeshtasticMui) "mt_tdeck_mui" else "mt_tdeck_baseui"
+                val trackPart = if (meshtasticTrack == MeshtasticTrack.ALPHA) "alpha" else "stable"
+                val trackPrefix = if (useMeshtasticMui) "mt_tdeck_mui_$trackPart" else "mt_tdeck_baseui_$trackPart"
+                val basePrefix = if (useMeshtasticMui) "mt_tdeck_mui" else "mt_tdeck_baseui"
+                val modeSuffix = if (fullErase) "factory" else "update"
+                // Try matching exact mode (factory vs update) first with track prefix
                 entries.firstOrNull {
                     it.boardId == board.id &&
                         it.ecosystem == FirmwareEcosystem.MESHTASTIC &&
-                        it.variantKey.startsWith(prefix) &&
+                        it.variantKey.startsWith(trackPrefix) &&
+                        it.variantKey.endsWith(modeSuffix) &&
+                        resolveFile(it.localFilePath).exists()
+                }?.let { return it }
+                // Otherwise match UI variant with track prefix
+                entries.firstOrNull {
+                    it.boardId == board.id &&
+                        it.ecosystem == FirmwareEcosystem.MESHTASTIC &&
+                        it.variantKey.startsWith(trackPrefix) &&
+                        resolveFile(it.localFilePath).exists()
+                }?.let { return it }
+                // Try matching exact mode with basePrefix + isMatchingTrack
+                entries.firstOrNull {
+                    it.boardId == board.id &&
+                        it.ecosystem == FirmwareEcosystem.MESHTASTIC &&
+                        it.variantKey.startsWith(basePrefix) &&
+                        it.variantKey.endsWith(modeSuffix) &&
+                        isMatchingTrack(it) &&
+                        resolveFile(it.localFilePath).exists()
+                }?.let { return it }
+                // Otherwise match UI variant and track
+                entries.firstOrNull {
+                    it.boardId == board.id &&
+                        it.ecosystem == FirmwareEcosystem.MESHTASTIC &&
+                        it.variantKey.startsWith(basePrefix) &&
                         isMatchingTrack(it) &&
                         resolveFile(it.localFilePath).exists()
                 }?.let { return it }
             } else {
-                // For non-T-Deck Meshtastic boards, match saved Meshtastic image respecting track
+                // For non-T-Deck Meshtastic boards, match saved Meshtastic image respecting track and mode
+                val modeSuffix = if (fullErase) "factory" else "update"
+                entries.firstOrNull {
+                    it.boardId == board.id &&
+                        it.ecosystem == FirmwareEcosystem.MESHTASTIC &&
+                        it.variantKey.endsWith(modeSuffix) &&
+                        isMatchingTrack(it) &&
+                        resolveFile(it.localFilePath).exists()
+                }?.let { return it }
                 entries.firstOrNull {
                     it.boardId == board.id &&
                         it.ecosystem == FirmwareEcosystem.MESHTASTIC &&
@@ -401,6 +477,7 @@ class OfflineFirmwareVaultManager(context: Context) {
                 }
                 entries.firstOrNull {
                     it.boardId == board.id &&
+                        it.ecosystem == FirmwareEcosystem.MESHCORE &&
                         it.variantKey == flavorKey &&
                         resolveFile(it.localFilePath).exists()
                 }?.let { return it }
@@ -414,6 +491,7 @@ class OfflineFirmwareVaultManager(context: Context) {
                 }
                 entries.firstOrNull {
                     it.boardId == board.id &&
+                        it.ecosystem == FirmwareEcosystem.MESHCORE &&
                         it.variantKey == roleKey &&
                         resolveFile(it.localFilePath).exists()
                 }?.let { return it }

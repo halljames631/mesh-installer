@@ -46,9 +46,16 @@ class BleTransportManager(
         val MESHCORE_NUS_SERVICE: UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
     }
 
-    private val bluetoothManager: BluetoothManager? =
+    private val bluetoothManager: BluetoothManager? = try {
         context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
+    } catch (_: Exception) {
+        null
+    }
+    private val bluetoothAdapter: BluetoothAdapter? = try {
+        bluetoothManager?.adapter
+    } catch (_: Exception) {
+        null
+    }
 
     private val discoveredMap = LinkedHashMap<String, BleDiscoveredNode>()
     private var isScanning = false
@@ -99,7 +106,11 @@ class BleTransportManager(
         }
     }
 
-    fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
+    fun isBluetoothEnabled(): Boolean = try {
+        bluetoothAdapter?.isEnabled == true
+    } catch (_: Exception) {
+        false
+    }
 
     fun startBleScan(loopbackBench: Boolean) {
         val scanner = bluetoothAdapter?.bluetoothLeScanner
