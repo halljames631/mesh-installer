@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 780" width="380" height="780" style="background: #0B0F14; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <linearGradient id="headerGrad4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192838" />
+      <stop offset="100%" stop-color="#1C354D" />
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#388BFD" />
+      <stop offset="100%" stop-color="#58A6FF" />
+    </linearGradient>
+    <linearGradient id="cardGrad4" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#151C24" />
+      <stop offset="100%" stop-color="#11171E" />
+    </linearGradient>
+  </defs>
+
+  <!-- Device Frame Outline -->
+  <rect x="2" y="2" width="376" height="776" rx="36" fill="#0B0F14" stroke="#222C38" stroke-width="2.5"/>
+
+  <!-- Status Bar -->
+  <text x="28" y="28" fill="#8E9AA8" font-size="11" font-weight="600">09:45</text>
+  <g transform="translate(315, 18)" fill="#8E9AA8">
+    <path d="M0 8 h4 v-3 h-4 v3 M6 8 h4 v-5 h-4 v5 M12 8 h4 v-8 h-4 v8" fill="#8E9AA8"/>
+    <rect x="20" y="2" width="18" height="9" rx="2" fill="none" stroke="#8E9AA8" stroke-width="1.2"/>
+    <rect x="22" y="4" width="12" height="5" rx="1" fill="#58A6FF"/>
+  </g>
+
+  <!-- Top App Bar -->
+  <g transform="translate(20, 48)">
+    <rect x="0" y="0" width="340" height="54" rx="14" fill="url(#headerGrad4)" stroke="#234B68" stroke-width="1"/>
+    <circle cx="28" cy="27" r="14" fill="#58A6FF" opacity="0.2"/>
+    <path d="M22 23 h12 v10 h-12 z M24 23 v-2 a2 2 0 0 1 4 0 v2" fill="none" stroke="#58A6FF" stroke-width="2"/>
+    <text x="52" y="26" fill="#E6EDF3" font-size="16" font-weight="700">Offline Vault</text>
+    <text x="52" y="41" fill="#58A6FF" font-size="10" font-weight="600">MY DEVICES • 100% OFF-GRID READY</text>
+    <rect x="256" y="16" width="68" height="22" rx="11" fill="#238636" opacity="0.2"/>
+    <text x="290" y="31" fill="#3FB950" font-size="10" font-weight="700" text-anchor="middle">5 READY</text>
+  </g>
+
+  <!-- Info Banner -->
+  <g transform="translate(20, 114)">
+    <rect x="0" y="0" width="340" height="42" rx="10" fill="#132320" stroke="#00C9A7" stroke-width="1"/>
+    <circle cx="22" cy="21" r="8" fill="#00C9A7" opacity="0.2"/>
+    <path d="M18 21 L21 24 L26 18" fill="none" stroke="#00E5BD" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="38" y="25" fill="#7EE787" font-size="11" font-weight="600">All saved firmwares available offline in the wilderness</text>
+  </g>
+
+  <!-- Vault Card 1: LilyGO T-Deck -->
+  <g transform="translate(20, 168)">
+    <rect x="0" y="0" width="340" height="106" rx="14" fill="url(#cardGrad4)" stroke="#222C38" stroke-width="1"/>
+    <text x="18" y="26" fill="#FFFFFF" font-size="15" font-weight="700">LilyGO T-Deck / T-Deck Plus</text>
+    <text x="18" y="44" fill="#7D8590" font-size="11">ESP32-S3 • 16MB Flash • Keyboard &amp; Touch</text>
+    
+    <!-- Badges -->
+    <rect x="18" y="58" width="134" height="22" rx="6" fill="#132320" stroke="#00C9A7" stroke-width="1"/>
+    <text x="85" y="73" fill="#00E5BD" font-size="9.5" font-weight="700" text-anchor="middle">Meshtastic Alpha 2.8.1 (MUI)</text>
+
+    <rect x="158" y="58" width="100" height="22" rx="6" fill="#1F2833"/>
+    <text x="208" y="73" fill="#8B949E" font-size="9.5" font-weight="600" text-anchor="middle">MeshCore Ripple</text>
+
+    <rect x="18" y="84" width="94" height="16" rx="4" fill="#238636" opacity="0.25"/>
+    <text x="65" y="95" fill="#3FB950" font-size="9" font-weight="700" text-anchor="middle">CACHED (3.4 MB)</text>
+    
+    <circle cx="316" cy="53" r="14" fill="#00C9A7" opacity="0.15"/>
+    <path d="M312 48 L318 53 L312 58" fill="none" stroke="#00E5BD" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Vault Card 2: B&Q Station G2 -->
+  <g transform="translate(20, 286)">
+    <rect x="0" y="0" width="340" height="96" rx="14" fill="url(#cardGrad4)" stroke="#222C38" stroke-width="1"/>
+    <text x="18" y="26" fill="#FFFFFF" font-size="15" font-weight="700">B&amp;Q Station G2 (High-Power)</text>
+    <text x="18" y="44" fill="#7D8590" font-size="11">ESP32-S3 • 3.5W High-Power RF</text>
+
+    <rect x="18" y="58" width="136" height="22" rx="6" fill="#1C232D" stroke="#2D3748" stroke-width="1"/>
+    <text x="86" y="73" fill="#58A6FF" font-size="9.5" font-weight="700" text-anchor="middle">Meshtastic Stable 2.5.4</text>
+
+    <rect x="160" y="58" width="94" height="22" rx="6" fill="#238636" opacity="0.25"/>
+    <text x="207" y="73" fill="#3FB950" font-size="9" font-weight="700" text-anchor="middle">CACHED (2.1 MB)</text>
+
+    <circle cx="316" cy="48" r="14" fill="#58A6FF" opacity="0.15"/>
+    <path d="M312 43 L318 48 L312 53" fill="none" stroke="#58A6FF" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Vault Card 3: Heltec WiFi LoRa 32 V3 -->
+  <g transform="translate(20, 394)">
+    <rect x="0" y="0" width="340" height="96" rx="14" fill="url(#cardGrad4)" stroke="#222C38" stroke-width="1"/>
+    <text x="18" y="26" fill="#FFFFFF" font-size="15" font-weight="700">Heltec WiFi LoRa 32 (V3)</text>
+    <text x="18" y="44" fill="#7D8590" font-size="11">ESP32-S3 • SX1262 LoRa • OLED Display</text>
+
+    <rect x="18" y="58" width="136" height="22" rx="6" fill="#1C232D" stroke="#2D3748" stroke-width="1"/>
+    <text x="86" y="73" fill="#58A6FF" font-size="9.5" font-weight="700" text-anchor="middle">Meshtastic Stable 2.5.4</text>
+
+    <rect x="160" y="58" width="94" height="22" rx="6" fill="#238636" opacity="0.25"/>
+    <text x="207" y="73" fill="#3FB950" font-size="9" font-weight="700" text-anchor="middle">CACHED (1.9 MB)</text>
+
+    <circle cx="316" cy="48" r="14" fill="#58A6FF" opacity="0.15"/>
+    <path d="M312 43 L318 48 L312 53" fill="none" stroke="#58A6FF" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Vault Card 4: RAK4631 WisBlock -->
+  <g transform="translate(20, 502)">
+    <rect x="0" y="0" width="340" height="96" rx="14" fill="url(#cardGrad4)" stroke="#222C38" stroke-width="1"/>
+    <text x="18" y="26" fill="#FFFFFF" font-size="15" font-weight="700">RAK Wireless RAK4631</text>
+    <text x="18" y="44" fill="#7D8590" font-size="11">Nordic nRF52840 • Ultra Low Power • BLE DFU</text>
+
+    <rect x="18" y="58" width="144" height="22" rx="6" fill="#1C232D" stroke="#2D3748" stroke-width="1"/>
+    <text x="90" y="73" fill="#BC8CFF" font-size="9.5" font-weight="700" text-anchor="middle">Nordic UF2 / BLE DFU</text>
+
+    <rect x="168" y="58" width="94" height="22" rx="6" fill="#238636" opacity="0.25"/>
+    <text x="215" y="73" fill="#3FB950" font-size="9" font-weight="700" text-anchor="middle">CACHED (820 KB)</text>
+
+    <circle cx="316" cy="48" r="14" fill="#BC8CFF" opacity="0.15"/>
+    <path d="M312 43 L318 48 L312 53" fill="none" stroke="#BC8CFF" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sync All Button -->
+  <g transform="translate(20, 610)">
+    <rect x="0" y="0" width="340" height="46" rx="12" fill="url(#blueGrad)"/>
+    <text x="170" y="28" fill="#FFFFFF" font-size="12" font-weight="800" text-anchor="middle">SYNC &amp; UPDATE ALL FIRMWARES</text>
+  </g>
+
+  <!-- Bottom Navigation Bar -->
+  <g transform="translate(0, 696)">
+    <rect x="0" y="0" width="380" height="84" fill="#0D1117" stroke="#21262D" stroke-width="1"/>
+    <path d="M68 20 L62 32 L68 30 L74 36 L70 24 Z" fill="#7D8590"/>
+    <text x="68" y="52" fill="#7D8590" font-size="10" font-weight="500" text-anchor="middle">Flasher</text>
+    <rect x="156" y="20" width="16" height="12" rx="2" fill="none" stroke="#7D8590" stroke-width="1.5"/>
+    <text x="164" y="52" fill="#7D8590" font-size="10" font-weight="500" text-anchor="middle">Terminal</text>
+    
+    <!-- Tab 3 Active -->
+    <circle cx="264" cy="28" r="16" fill="#58A6FF" opacity="0.15"/>
+    <path d="M256 20 h16 v12 h-16 z M260 20 v-2 a4 4 0 0 1 8 0 v2" fill="none" stroke="#58A6FF" stroke-width="1.8"/>
+    <text x="264" y="52" fill="#58A6FF" font-size="10" font-weight="700" text-anchor="middle">Vault</text>
+
+    <circle cx="330" cy="26" r="7" fill="none" stroke="#7D8590" stroke-width="1.5"/>
+    <text x="330" y="52" fill="#7D8590" font-size="10" font-weight="500" text-anchor="middle">Test Bench</text>
+  </g>
+</svg>
