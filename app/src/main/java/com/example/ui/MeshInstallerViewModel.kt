@@ -1141,7 +1141,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
             val canUseCachedEntry = cachedEntry != null &&
                 isMatchingVariant &&
                 (snapshot.selectedRelease == null || snapshot.selectedRelease?.tagName == cachedEntry.versionTag) &&
-                (cachedEntry.isRealBinary || snapshot.loopbackTestBench)
+                ((cachedEntry.isRealBinary && cachedEntry.sizeBytes > 65536L) || snapshot.loopbackTestBench)
             val cachedImage = if (customBytes == null && canUseCachedEntry && cachedEntry != null) {
                 vaultManager.loadPreparedImageFromEntry(cachedEntry)
             } else {

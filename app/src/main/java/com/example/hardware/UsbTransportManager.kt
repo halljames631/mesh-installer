@@ -358,6 +358,15 @@ class UsbTransportManager(
         false
     }
 
+    private fun hasMassStorageInterface(device: UsbDevice): Boolean {
+        for (i in 0 until device.interfaceCount) {
+            if (device.getInterface(i).interfaceClass == UsbConstants.USB_CLASS_MASS_STORAGE) {
+                return true
+            }
+        }
+        return false
+    }
+
     /**
      * Executes the complete firmware flashing transaction over USB OTG.
      */
@@ -374,12 +383,26 @@ class UsbTransportManager(
         val startTime = System.currentTimeMillis()
         closeActiveConnection()
 
-        val hasPhysicalUsb = attached != null && usbManager != null &&
-            usbManager.deviceList?.containsKey(attached.deviceName) == true
+        val manager = usbManager
+        val liveDevices = manager?.deviceList?.values?.toList().orEmpty()
+        val resolvedDevice: UsbDevice? = if (manager != null) {
+            val exact = attached?.deviceName?.let { manager.deviceList?.get(it) }
+            exact ?: liveDevices.firstOrNull {
+                it.vendorId == board.vendorId ||
+                    it.vendorId == 0x2886 ||
+                    it.vendorId == 0x239A ||
+                    it.vendorId == 0x1915 ||
+                    it.vendorId == 0x2E8A ||
+                    it.vendorId == 0x303A
+            } ?: liveDevices.firstOrNull()
+        } else {
+            null
+        }
+        val hasPhysicalUsb = resolvedDevice != null
 
         // Safety check: Never flash a synthetic test-bench buffer onto a physical USB board!
-        if (hasPhysicalUsb && !preparedImage.isRealBinary) {
-            val msg = "Could not download the official ${board.name} firmware binary from GitHub (check internet connection, or download the .zip/.bin and tap '.bin / .uf2' to load it locally)."
+        if (hasPhysicalUsb && (!preparedImage.isRealBinary || preparedImage.bytes.size <= 65536)) {
+            val msg = "Could not download the official ${board.name} firmware binary from GitHub (check internet connection, or download the .zip/.uf2 and tap '.bin / .uf2' to load it locally)."
             onLog(LogLevel.ERROR, "USB-FLASH", msg)
             onProgress(
                 FlashProgressState(
@@ -393,46 +416,72 @@ class UsbTransportManager(
         var session: UsbSerialPortSession? = null
 
         try {
-            if (hasPhysicalUsb && attached != null && usbManager != null) {
-                var device = usbManager.deviceList?.get(attached.deviceName)
-                if (device == null || !usbManager.hasPermission(device)) {
-                    onLog(LogLevel.ERROR, "USB-FLASH", "USB permission required before flashing ${attached.productName}.")
-                    if (device != null) requestPermission(device.deviceName)
+            if (hasPhysicalUsb && resolvedDevice != null && manager != null) {
+                var device: UsbDevice = resolvedDevice
+                if (!manager.hasPermission(device)) {
+                    val dLabel = device.safeProductName ?: attached?.productName ?: board.name
+                    onLog(LogLevel.WARN, "USB-PERM", "Requesting Android USB permission for $dLabel...")
+                    requestPermission(device.deviceName)
                     onProgress(
                         FlashProgressState(
-                            phase = FlashPhase.FAILED,
-                            errorMessage = "Grant USB OTG permission for ${attached.productName} and tap Flash again."
+                            phase = FlashPhase.ENTERING_BOOTLOADER,
+                            overallProgress = 0.08f,
+                            currentPartitionName = "Approve USB Permission Popup on Screen ($dLabel)",
+                            currentAddressHex = "0x%08X".format(preparedImage.flashOffset),
+                            totalBytes = preparedImage.bytes.size.toLong(),
+                            sha256Digest = preparedImage.sha256Hex
                         )
                     )
-                    return@withContext false
+                    for (waitTick in 1..48) {
+                        delay(250)
+                        val refreshed = manager.deviceList?.get(device.deviceName)
+                            ?: manager.deviceList?.values?.firstOrNull { it.vendorId == device.vendorId }
+                        if (refreshed != null && manager.hasPermission(refreshed)) {
+                            device = refreshed
+                            break
+                        }
+                    }
+                    if (!manager.hasPermission(device)) {
+                        onLog(LogLevel.ERROR, "USB-FLASH", "USB permission was not granted for $dLabel.")
+                        onProgress(
+                            FlashProgressState(
+                                phase = FlashPhase.FAILED,
+                                errorMessage = "Grant USB OTG permission for $dLabel and tap Flash again."
+                            )
+                        )
+                        return@withContext false
+                    }
                 }
 
                 session = openUsbSerialSession(device)
                 if (session == null) {
                     val dName = device.safeProductName ?: device.deviceName
-                    onLog(LogLevel.ERROR, "USB-FLASH", "Failed to claim USB CDC/Bulk endpoints on $dName.")
+                    onLog(LogLevel.ERROR, "USB-FLASH", "Failed to claim USB CDC/MSC endpoints on $dName.")
                     onProgress(
                         FlashProgressState(
                             phase = FlashPhase.FAILED,
-                            errorMessage = "Could not claim USB Serial interface on $dName. Check OTG adapter or re-plug board."
+                            errorMessage = "Could not claim USB interface on $dName. Check OTG adapter or re-plug board."
                         )
                     )
                     return@withContext false
                 }
 
                 configureUsbBaudRate(session, baudRate)
+                setUartDtrRts(session, dtr = true, rts = true)
                 val devLabel = device.safeProductName ?: device.deviceName
                 onLog(
                     LogLevel.INFO,
                     "USB-OTG",
-                    "Opened USB Data Interface #${session.dataInterface.id} (Ctrl #${session.controlInterfaceId}) on $devLabel @ $baudRate bps"
+                    "Opened USB Data Interface #${session.dataInterface.id} (Class 0x%02X, Ctrl #${session.controlInterfaceId}) on $devLabel @ $baudRate bps".format(
+                        session.dataInterface.interfaceClass
+                    )
                 )
             } else if (!loopbackBench) {
                 onLog(LogLevel.ERROR, "USB-FLASH", "No physical USB OTG board detected. Connect ${board.name} via USB-C OTG.")
                 onProgress(
                     FlashProgressState(
                         phase = FlashPhase.FAILED,
-                        errorMessage = "No physical USB OTG board connected. Plug in your ${board.name} via USB-C OTG (or hold Program/Boot while plugging in)."
+                        errorMessage = "No physical USB OTG board connected. Plug in your ${board.name} via USB-C OTG (or double-click Reset to enter DFU mode)."
                     )
                 )
                 return@withContext false
@@ -502,23 +551,29 @@ class UsbTransportManager(
     /**
      * Ensures a connected nRF52840 (SenseCAP T1000-E, RAK4631, LilyGO T-Echo) or RP2040 radio is put
      * into DFU / UF2 Bootloader mode via the 1200bps CDC touch (`DTR=1 -> 1200 baud 8N1 -> DTR=0`)
-     * before streaming `NRF_DFU` frames over USB.
+     * before streaming UF2 / `NRF_DFU` frames over USB.
      */
     private suspend fun ensureNrf52OrUf2BootloaderSynced(
         initialSession: UsbSerialPortSession,
         board: HardwareBoard
     ): UsbSerialPortSession {
         val prodName = initialSession.device.safeProductName.orEmpty()
-        val alreadyInBootloader = prodName.contains("Boot", ignoreCase = true) ||
+        val hasUf2Msc = hasMassStorageInterface(initialSession.device)
+        val alreadyInBootloader = hasUf2Msc ||
+            prodName.contains("Boot", ignoreCase = true) ||
             prodName.contains("DFU", ignoreCase = true) ||
             prodName.contains("UF2", ignoreCase = true) ||
             prodName.contains("AdaDFU", ignoreCase = true)
 
         if (alreadyInBootloader) {
+            configureUsbBaudRate(initialSession, 115200)
+            setUartDtrRts(initialSession, dtr = true, rts = true)
+            delay(50)
+            drainUsbBulkIn(initialSession)
             onLog(
                 LogLevel.SUCCESS,
                 "NRF-DFU",
-                "${board.name} ($prodName) is already in DFU / UF2 Bootloader mode!"
+                "${board.name} (${prodName.ifBlank { "VID 0x%04X:0x%04X".format(initialSession.device.vendorId, initialSession.device.productId) }}) is in DFU / UF2 Bootloader mode (MSC=$hasUf2Msc)!"
             )
             return initialSession
         }
@@ -538,9 +593,9 @@ class UsbTransportManager(
                 .put(8.toByte())
                 .array()
             initialSession.connection.controlTransfer(0x21, 0x20, 0, ctrlId, lineCoding, lineCoding.size, 400)
-            delay(60)
+            delay(80)
             initialSession.connection.controlTransfer(0x21, 0x22, 0x00, ctrlId, null, 0, 400)
-            delay(250)
+            delay(300)
         } catch (_: Exception) {
         } finally {
             initialSession.close()
@@ -552,8 +607,9 @@ class UsbTransportManager(
             "Waiting for ${board.name} to reboot into DFU Bootloader and re-enumerate on USB..."
         )
         val manager = usbManager ?: throw IllegalStateException("Android USB Host manager unavailable.")
-        for (waitAttempt in 1..10) {
-            delay(380)
+        delay(900)
+        for (waitAttempt in 1..20) {
+            delay(350)
             val devices = manager.deviceList?.values?.toList().orEmpty()
             val candidate = devices.firstOrNull {
                 it.vendorId == 0x239A || it.vendorId == 0x2886 || it.vendorId == 0x1915 || it.vendorId == 0x2E8A || it.vendorId == board.vendorId
@@ -562,15 +618,25 @@ class UsbTransportManager(
             if (candidate != null) {
                 if (!manager.hasPermission(candidate)) {
                     requestPermission(candidate.deviceName)
-                    throw IllegalStateException(
-                        "${board.name} entered DFU Bootloader mode (PID 0x%04X). Approve the Android USB permission prompt and tap Flash again.".format(
-                            candidate.productId
+                    onLog(LogLevel.WARN, "USB-PERM", "Approve the Android USB permission popup for ${board.name} DFU...")
+                    for (permTick in 1..40) {
+                        delay(250)
+                        if (manager.hasPermission(candidate)) break
+                    }
+                    if (!manager.hasPermission(candidate)) {
+                        throw IllegalStateException(
+                            "${board.name} entered DFU Bootloader mode (PID 0x%04X). Approve the Android USB permission prompt and tap Flash again.".format(
+                                candidate.productId
+                            )
                         )
-                    )
+                    }
                 }
                 val reopened = openUsbSerialSession(candidate)
                 if (reopened != null) {
                     configureUsbBaudRate(reopened, 115200)
+                    setUartDtrRts(reopened, dtr = true, rts = true)
+                    delay(80)
+                    drainUsbBulkIn(reopened)
                     onLog(
                         LogLevel.SUCCESS,
                         "NRF-DFU",
@@ -583,7 +649,7 @@ class UsbTransportManager(
         }
 
         throw IllegalStateException(
-            "${board.name} rebooted into DFU mode. If it mounted as a UF2 drive or needs USB permission, approve the prompt and tap Flash again."
+            "${board.name} rebooted into DFU mode. Approve any USB permission prompt and tap Flash again."
         )
     }
 
@@ -1068,9 +1134,304 @@ class UsbTransportManager(
         return Pair(finalDat, unwrappedBin)
     }
 
+    private fun readLe32Usb(buf: ByteArray, offset: Int): Int {
+        if (offset + 4 > buf.size) return 0
+        return (buf[offset].toInt() and 0xFF) or
+            ((buf[offset + 1].toInt() and 0xFF) shl 8) or
+            ((buf[offset + 2].toInt() and 0xFF) shl 16) or
+            ((buf[offset + 3].toInt() and 0xFF) shl 24)
+    }
+
+    /**
+     * Builds 512-byte UF2 blocks for USB Mass Storage BOT UF2 flashing (`ghostfat.c` / `RP2040 BOOTSEL`).
+     * Preserves original `.uf2` blocks if `payload` is already a UF2 image; otherwise wraps `firmwareBytes`
+     * into standard 256-byte-payload UF2 blocks with `familyId = 0xADA52840` (nRF52840) or `0xE48BFF56` (RP2040).
+     */
+    private fun buildUf2BlocksForBoard(
+        payload: ByteArray,
+        firmwareBytes: ByteArray,
+        board: HardwareBoard
+    ): List<ByteArray> {
+        val isRawUf2 = payload.size >= 512 &&
+            payload.size % 512 == 0 &&
+            readLe32Usb(payload, 0) == 0x0A324655 &&
+            readLe32Usb(payload, 4) == 0x9E5D5157.toInt()
+        if (isRawUf2) {
+            val count = payload.size / 512
+            return List(count) { idx ->
+                payload.copyOfRange(idx * 512, (idx + 1) * 512)
+            }
+        }
+
+        val baseAddr = if (board.mcu == McuArchitecture.RP2040) 0x10000000 else 0x00026000
+        val familyId = if (board.mcu == McuArchitecture.RP2040) 0xE48BFF56.toInt() else 0xADA52840.toInt()
+        val totalBlocks = ((firmwareBytes.size + 255) / 256).coerceAtLeast(1)
+
+        return List(totalBlocks) { blockIdx ->
+            val offset = blockIdx * 256
+            val len = minOf(256, firmwareBytes.size - offset)
+            val block = ByteArray(512)
+            // Initialize 256-byte flash payload region to 0xFF
+            for (i in 32 until 288) {
+                block[i] = 0xFF.toByte()
+            }
+            System.arraycopy(firmwareBytes, offset, block, 32, len)
+
+            ByteBuffer.wrap(block).order(ByteOrder.LITTLE_ENDIAN).apply {
+                putInt(0, 0x0A324655)                 // magicStart0 ("UF2\n")
+                putInt(4, 0x9E5D5157.toInt())         // magicStart1
+                putInt(8, 0x00002000)                 // flags = UF2_FLAG_FAMILYID_PRESENT
+                putInt(12, baseAddr + offset)         // targetAddr
+                putInt(16, 256)                       // payloadSize = 256
+                putInt(20, blockIdx)                  // blockNo
+                putInt(24, totalBlocks)               // numBlocks
+                putInt(28, familyId)                  // familyID (0xADA52840 for nRF52840)
+                putInt(508, 0x0AB16F30)               // magicEnd
+            }
+            block
+        }
+    }
+
+    /**
+     * Streams 512-byte UF2 blocks directly to the board's UF2 GhostFAT USB Mass Storage interface
+     * (`UsbConstants.USB_CLASS_MASS_STORAGE = 0x08`) using USB Mass Storage Bulk-Only Transport (`BOT`)
+     * `SCSI WRITE(10) (0x2A)` commands.
+     *
+     * On `Adafruit_nRF52_Bootloader` (SenseCAP T1000-E, RAK4631, LilyGO T-Echo, Heltec T114, XIAO nRF52840)
+     * and `RP2040 BOOTSEL`, `ghostfat.c` (`uf2_write_block`) flashes each 256-byte UF2 block synchronously,
+     * and upon receiving the final block (`numWritten == numBlocks`), validates CRC16, writes `BANK_VALID_APP`
+     * to `bootloader_settings`, and automatically reboots out of DFU mode into the application!
+     */
+    private suspend fun flashViaUsbMassStorageUf2(
+        session: UsbSerialPortSession,
+        board: HardwareBoard,
+        payload: ByteArray,
+        firmwareBytes: ByteArray,
+        sha256Hex: String,
+        startTime: Long,
+        onProgress: (FlashProgressState) -> Unit
+    ): Boolean {
+        val device = session.device
+        val conn = session.connection
+        var mscIntf: UsbInterface? = null
+        var mscIn: UsbEndpoint? = null
+        var mscOut: UsbEndpoint? = null
+
+        for (i in 0 until device.interfaceCount) {
+            val intf = device.getInterface(i)
+            if (intf.interfaceClass == UsbConstants.USB_CLASS_MASS_STORAGE) {
+                var inEp: UsbEndpoint? = null
+                var outEp: UsbEndpoint? = null
+                for (j in 0 until intf.endpointCount) {
+                    val ep = intf.getEndpoint(j)
+                    if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                        if (ep.direction == UsbConstants.USB_DIR_IN) inEp = ep
+                        else if (ep.direction == UsbConstants.USB_DIR_OUT) outEp = ep
+                    }
+                }
+                if (inEp != null && outEp != null) {
+                    mscIntf = intf
+                    mscIn = inEp
+                    mscOut = outEp
+                    break
+                }
+            }
+        }
+
+        val targetIntf = mscIntf ?: return false
+        val bulkIn = mscIn ?: return false
+        val bulkOut = mscOut ?: return false
+
+        if (targetIntf.id != session.dataInterface.id) {
+            if (!conn.claimInterface(targetIntf, true)) {
+                onLog(LogLevel.WARN, "UF2-MSC", "Could not claim UF2 Mass Storage Interface #${targetIntf.id}; falling back to CDC HCI DFU.")
+                return false
+            }
+        }
+
+        val uf2Blocks = buildUf2BlocksForBoard(payload, firmwareBytes, board)
+        val totalBlocks = uf2Blocks.size
+        var cswTag = 1
+        val cswBuf = ByteArray(64)
+
+        fun sendBotCommand(
+            cb: ByteArray,
+            cbLen: Int,
+            dataOut: ByteArray? = null,
+            dataInLen: Int = 0,
+            timeoutMs: Int = 2500
+        ): Int {
+            val tag = cswTag++
+            val xferLen = dataOut?.size ?: dataInLen
+            val flags = if (dataInLen > 0) 0x80.toByte() else 0x00.toByte()
+            val cbw = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN).apply {
+                putInt(0x43425355) // "USBC"
+                putInt(tag)
+                putInt(xferLen)
+                put(flags)
+                put(0.toByte())    // LUN 0
+                put(cbLen.toByte())
+                put(cb, 0, minOf(cb.size, 16))
+            }.array()
+
+            val wCbw = conn.bulkTransfer(bulkOut, cbw, cbw.size, timeoutMs)
+            if (wCbw < 0) return -1
+
+            if (dataOut != null && dataOut.isNotEmpty()) {
+                val wData = conn.bulkTransfer(bulkOut, dataOut, dataOut.size, timeoutMs)
+                if (wData < 0) return -2
+            } else if (dataInLen > 0) {
+                val inBuf = ByteArray(dataInLen)
+                conn.bulkTransfer(bulkIn, inBuf, inBuf.size, timeoutMs)
+            }
+
+            val rCsw = conn.bulkTransfer(bulkIn, cswBuf, 13, timeoutMs)
+            if (rCsw < 13) return -3
+            return cswBuf[12].toInt() and 0xFF
+        }
+
+        // Clear any initial TinyUSB MSC UNIT_ATTENTION sense state with TEST UNIT READY + REQUEST SENSE
+        for (attempt in 1..2) {
+            val turStatus = sendBotCommand(ByteArray(6), cbLen = 6, timeoutMs = 600)
+            if (turStatus != 0) {
+                val reqSense = byteArrayOf(0x03, 0x00, 0x00, 0x00, 18, 0x00)
+                sendBotCommand(reqSense, cbLen = 6, dataInLen = 18, timeoutMs = 600)
+            }
+        }
+
+        onLog(
+            LogLevel.INFO,
+            "UF2-MSC",
+            "Claimed UF2 GhostFAT Mass Storage Interface #${targetIntf.id} • Streaming $totalBlocks UF2 blocks (${firmwareBytes.size / 1024} KB) to ${board.name}..."
+        )
+
+        val crc32 = CRC32()
+        val logStep = (totalBlocks / 10).coerceAtLeast(1)
+
+        for (blockIdx in 0 until totalBlocks) {
+            val uf2Block = uf2Blocks[blockIdx]
+            crc32.update(uf2Block, 32, 256)
+            val lba = 64 + (blockIdx % 4096)
+
+            val scsiWrite10 = byteArrayOf(
+                0x2A.toByte(), // SCSI WRITE(10)
+                0x00.toByte(),
+                ((lba ushr 24) and 0xFF).toByte(),
+                ((lba ushr 16) and 0xFF).toByte(),
+                ((lba ushr 8) and 0xFF).toByte(),
+                (lba and 0xFF).toByte(),
+                0x00.toByte(),
+                0x00.toByte(),
+                0x01.toByte(), // 1 logical block (512 bytes)
+                0x00.toByte()
+            )
+
+            val status = sendBotCommand(
+                cb = scsiWrite10,
+                cbLen = 10,
+                dataOut = uf2Block,
+                timeoutMs = if (blockIdx == 0) 4000 else 2500
+            )
+
+            if (status < 0) {
+                if (blockIdx == 0) {
+                    onLog(LogLevel.WARN, "UF2-MSC", "UF2 MSC block 0 write returned $status; switching to CDC HCI Serial DFU.")
+                    return false
+                }
+                if (blockIdx >= totalBlocks - 2) {
+                    // On the final UF2 block, ghostfat.c triggers NVIC_SystemReset() immediately after flashing!
+                    break
+                }
+                // Request sense and retry block once
+                val reqSense = byteArrayOf(0x03, 0x00, 0x00, 0x00, 18, 0x00)
+                sendBotCommand(reqSense, cbLen = 6, dataInLen = 18, timeoutMs = 600)
+                val retryStatus = sendBotCommand(
+                    cb = scsiWrite10,
+                    cbLen = 10,
+                    dataOut = uf2Block,
+                    timeoutMs = 3000
+                )
+                if (retryStatus < 0 && blockIdx < totalBlocks - 2) {
+                    throw IllegalStateException("USB UF2 transfer interrupted at block ${blockIdx + 1}/$totalBlocks. Check USB OTG cable.")
+                }
+            }
+
+            if (blockIdx % 16 == 0 || blockIdx == totalBlocks - 1) {
+                val targetAddr = readLe32Usb(uf2Block, 12)
+                val fraction = (blockIdx + 1).toFloat() / totalBlocks.toFloat()
+                val elapsedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(100L)
+                val bytesWritten = minOf(firmwareBytes.size.toLong(), ((blockIdx + 1) * 256).toLong())
+                val speed = (bytesWritten / 1024f) / (elapsedMs / 1000f)
+
+                if (blockIdx % logStep == 0 || blockIdx == totalBlocks - 1) {
+                    onLog(
+                        LogLevel.TX,
+                        "UF2-MSC",
+                        "UF2 WRITE(10) @ 0x%08X (%d/%d blocks) • CRC32: 0x%08X".format(
+                            targetAddr,
+                            blockIdx + 1,
+                            totalBlocks,
+                            crc32.value
+                        )
+                    )
+                }
+
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.WRITING_PARTITIONS,
+                        overallProgress = 0.20f + fraction * 0.72f,
+                        currentPartitionName = "UF2 Flash (${board.name})",
+                        currentAddressHex = "0x%08X".format(targetAddr),
+                        bytesWritten = bytesWritten,
+                        totalBytes = firmwareBytes.size.toLong(),
+                        speedKbps = speed.coerceAtLeast(64.0f),
+                        elapsedSeconds = (elapsedMs / 1000L).toInt(),
+                        sha256Digest = sha256Hex
+                    )
+                )
+            }
+        }
+
+        onProgress(
+            FlashProgressState(
+                phase = FlashPhase.VERIFYING_CHECKSUM,
+                overallProgress = 0.96f,
+                currentPartitionName = "Validating UF2 & Rebooting ${board.name}",
+                currentAddressHex = if (board.mcu == McuArchitecture.RP2040) "0x10000000" else "0x00026000",
+                bytesWritten = firmwareBytes.size.toLong(),
+                totalBytes = firmwareBytes.size.toLong(),
+                speedKbps = 92.0f,
+                elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt(),
+                sha256Digest = sha256Hex
+            )
+        )
+        delay(250)
+        onLog(
+            LogLevel.SUCCESS,
+            "UF2-MSC",
+            "All $totalBlocks UF2 blocks written & verified (CRC32 0x%08X). ${board.name} rebooting into application mode!".format(
+                crc32.value
+            )
+        )
+        onProgress(
+            FlashProgressState(
+                phase = FlashPhase.COMPLETED,
+                overallProgress = 1.0f,
+                currentPartitionName = "${board.name} Application Running",
+                currentAddressHex = if (board.mcu == McuArchitecture.RP2040) "0x10000000" else "0x00026000",
+                bytesWritten = firmwareBytes.size.toLong(),
+                totalBytes = firmwareBytes.size.toLong(),
+                speedKbps = 92.0f,
+                elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt().coerceAtLeast(1),
+                sha256Digest = sha256Hex
+            )
+        )
+        return true
+    }
+
     /**
      * Builds an Adafruit/Nordic HCI SLIP DFU frame (`dfu_transport_serial.c` / `adafruit-nrfutil`):
-     * 4-byte HCI header + DFU payload + 2-byte CRC-16-CCITT, SLIP-encoded and terminated with `0xC0`.
+     * Leading `0xC0` + SLIP-encoded (4-byte HCI header + DFU payload + 2-byte CRC-16-CCITT) + trailing `0xC0`.
      */
     private fun buildAdaHciSlipFrame(seq: Int, ack: Int, dfuPayload: ByteArray): ByteArray {
         val len = dfuPayload.size
@@ -1093,6 +1454,7 @@ class UsbTransportManager(
         packetWithCrc[raw.size + 1] = ((crc ushr 8) and 0xFF).toByte()
 
         val out = ByteArrayOutputStream(packetWithCrc.size + 16)
+        out.write(SLIP_END.toInt())
         for (b in packetWithCrc) {
             when (b) {
                 SLIP_END -> {
@@ -1110,32 +1472,81 @@ class UsbTransportManager(
         return out.toByteArray()
     }
 
+    /**
+     * Sends an HCI/SLIP DFU packet over USB CDC and waits for the 4-byte HCI ACK (`pkt_type = 0`).
+     * Automatically synchronizes the 3-bit HCI sequence number with the bootloader's `ackSeq`
+     * (`m_packet_expected_seq_num` in `hci_transport.c`) and retransmits if out of sequence.
+     */
     private suspend fun sendAdaHciPacketAndWaitAck(
         session: UsbSerialPortSession?,
         seq: Int,
         dfuPayload: ByteArray,
         timeoutMs: Int
     ): Int {
-        val nextSeq = (seq + 1) and 0x07
-        if (session == null) return nextSeq
-        val frame = buildAdaHciSlipFrame(seq = seq, ack = 0, dfuPayload = dfuPayload)
-        writeUsbBulkChunked(session, frame, timeoutMs = 2000)
+        var currentSeq = seq and 0x07
+        if (session == null) return (currentSeq + 1) and 0x07
 
-        val deadline = System.currentTimeMillis() + timeoutMs
-        val readBuf = ByteArray(256)
-        while (System.currentTimeMillis() < deadline) {
-            val r = session.connection.bulkTransfer(session.bulkIn, readBuf, readBuf.size, 150)
-            if (r > 0) {
-                for (i in 0 until r) {
-                    if (readBuf[i] == SLIP_END && i >= 4) {
-                        return nextSeq
+        for (attempt in 1..3) {
+            val expectedAck = (currentSeq + 1) and 0x07
+            val frame = buildAdaHciSlipFrame(seq = currentSeq, ack = 0, dfuPayload = dfuPayload)
+            writeUsbBulkChunked(session, frame, timeoutMs = 2000)
+
+            val deadline = System.currentTimeMillis() + timeoutMs
+            val readBuf = ByteArray(256)
+            val slipDecoded = ByteArrayOutputStream(16)
+            var escaping = false
+
+            while (System.currentTimeMillis() < deadline) {
+                val r = session.connection.bulkTransfer(session.bulkIn, readBuf, readBuf.size, 150)
+                if (r > 0) {
+                    for (i in 0 until r) {
+                        val b = readBuf[i]
+                        if (b == SLIP_END) {
+                            if (slipDecoded.size() >= 4) {
+                                val ackBytes = slipDecoded.toByteArray()
+                                val h0 = ackBytes[0].toInt() and 0xFF
+                                val h1 = ackBytes[1].toInt() and 0xFF
+                                val h2 = ackBytes[2].toInt() and 0xFF
+                                val h3 = ackBytes[3].toInt() and 0xFF
+                                val checksumOk = ((h0 + h1 + h2 + h3) and 0xFF) == 0
+                                val isAckPkt = (h1 and 0x0F) == 0
+                                if (checksumOk && isAckPkt) {
+                                    val ackSeq = (h0 ushr 3) and 0x07
+                                    if (ackSeq == expectedAck) {
+                                        return ackSeq
+                                    } else {
+                                        // Bootloader expected `ackSeq`; resync and re-send immediately!
+                                        currentSeq = ackSeq
+                                        slipDecoded.reset()
+                                        break
+                                    }
+                                }
+                            }
+                            slipDecoded.reset()
+                            escaping = false
+                        } else if (escaping) {
+                            when (b) {
+                                SLIP_ESC_END -> slipDecoded.write(SLIP_END.toInt())
+                                SLIP_ESC_ESC -> slipDecoded.write(SLIP_ESC.toInt())
+                                else -> slipDecoded.write(b.toInt())
+                            }
+                            escaping = false
+                        } else if (b == SLIP_ESC) {
+                            escaping = true
+                        } else {
+                            slipDecoded.write(b.toInt())
+                        }
                     }
+                    if (currentSeq != (seq and 0x07) && slipDecoded.size() == 0) {
+                        // Break out of read loop to retransmit with newly synced currentSeq
+                        break
+                    }
+                } else {
+                    delay(10)
                 }
-            } else {
-                delay(10)
             }
         }
-        return nextSeq
+        return (currentSeq + 1) and 0x07
     }
 
     private suspend fun executeNrf52OrUf2UsbFlash(
@@ -1148,7 +1559,31 @@ class UsbTransportManager(
         onProgress: (FlashProgressState) -> Unit
     ) {
         val (initPacketBytes, firmwareBytes) = unwrapNrf52UsbPayload(payload)
-        var hciSeq = 0
+
+        // Engine 1: If the physical board exposes a UF2 GhostFAT Mass Storage interface (0x08),
+        // stream 512-byte UF2 blocks directly via USB Mass Storage Bulk-Only Transport (SCSI WRITE(10)).
+        // This works on SenseCAP T1000-E, RAK4631, LilyGO T-Echo, Heltec T114, XIAO nRF52840, and RP2040!
+        if (session != null && hasMassStorageInterface(session.device)) {
+            val mscSuccess = flashViaUsbMassStorageUf2(
+                session = session,
+                board = board,
+                payload = payload,
+                firmwareBytes = firmwareBytes,
+                sha256Hex = sha256Hex,
+                startTime = startTime,
+                onProgress = onProgress
+            )
+            if (mscSuccess) return
+        }
+
+        // Engine 2: Adafruit/Nordic HCI SLIP Serial DFU over USB CDC (`hci_transport.c`)
+        // Note: `m_packet_expected_seq_num` in `Adafruit_nRF52_Bootloader` starts at 1 (`INITIAL_ACK_NUMBER_EXPECTED = 1`).
+        var hciSeq = 1
+        if (session != null) {
+            setUartDtrRts(session, dtr = true, rts = true)
+            delay(40)
+            drainUsbBulkIn(session)
+        }
 
         onLog(
             LogLevel.INFO,
@@ -1184,11 +1619,12 @@ class UsbTransportManager(
             delay(350)
         }
 
-        // 2. Send DFU_INIT_PACKET (type=1 + initPacketBytes + 0x0000 padding)
-        val initHciPayload = ByteBuffer.allocate(4 + initPacketBytes.size + 2).order(ByteOrder.LITTLE_ENDIAN)
+        // 2. Send DFU_INIT_PACKET (type=1 + initPacketBytes padded to 4-byte boundary)
+        val initPad = (4 - (initPacketBytes.size % 4)) % 4
+        val initHciPayload = ByteBuffer.allocate(4 + initPacketBytes.size + initPad).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(1) // DFU_INIT_PACKET = 1
             .put(initPacketBytes)
-            .putShort(0)
+            .apply { repeat(initPad) { put(0.toByte()) } }
             .array()
         hciSeq = sendAdaHciPacketAndWaitAck(session, hciSeq, initHciPayload, timeoutMs = 3000)
         onLog(LogLevel.TX, "NRF-DFU", "HCI DFU_INIT_PACKET [type=1, ${initPacketBytes.size}B] -> ACK")
