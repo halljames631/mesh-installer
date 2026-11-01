@@ -154,8 +154,9 @@ fun MeshInstallerApp(
                 if (!isWideScreen) {
                     val mainTabs = listOf(
                         InstallerTab.FLASHER,
-                        InstallerTab.TERMINAL,
+                        InstallerTab.BOARDS,
                         InstallerTab.VAULT,
+                        InstallerTab.TERMINAL,
                         InstallerTab.TEST_BENCH
                     )
                     NavigationBar(
@@ -167,6 +168,7 @@ fun MeshInstallerApp(
                             val selected = currentTab == tab
                             val tabColor = when (tab) {
                                 InstallerTab.FLASHER -> CyberCyan
+                                InstallerTab.BOARDS -> CyberTeal
                                 InstallerTab.TERMINAL -> PurpleAccent
                                 InstallerTab.VAULT -> BlueAccent
                                 InstallerTab.TEST_BENCH -> AmberSignal
@@ -223,14 +225,16 @@ fun MeshInstallerApp(
                     ) {
                         val mainTabs = listOf(
                             InstallerTab.FLASHER,
-                            InstallerTab.TERMINAL,
+                            InstallerTab.BOARDS,
                             InstallerTab.VAULT,
+                            InstallerTab.TERMINAL,
                             InstallerTab.TEST_BENCH
                         )
                         mainTabs.forEach { tab ->
                             val selected = currentTab == tab
                             val tabColor = when (tab) {
                                 InstallerTab.FLASHER -> CyberCyan
+                                InstallerTab.BOARDS -> CyberTeal
                                 InstallerTab.TERMINAL -> PurpleAccent
                                 InstallerTab.VAULT -> BlueAccent
                                 InstallerTab.TEST_BENCH -> AmberSignal

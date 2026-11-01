@@ -230,10 +230,10 @@ fun OffGridVaultDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     FilterChip(
-                        selected = uiState.myDeviceIds.size == 4 &&
-                            uiState.myDeviceIds.containsAll(setOf("lilygo_tdeck", "station_g2", "heltec_v3", "rak4631")),
+                        selected = uiState.myDeviceIds.size == 5 &&
+                            uiState.myDeviceIds.containsAll(setOf("heltec_v4", "heltec_v3", "lilygo_tdeck", "station_g2", "rak4631")),
                         onClick = onSelectPopular,
-                        label = { Text("Popular Kit (4)") },
+                        label = { Text("Popular Kit (5)") },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MeshtasticGreen.copy(alpha = 0.2f),
                             selectedLabelColor = MeshtasticGreen

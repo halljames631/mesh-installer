@@ -285,13 +285,13 @@ class GitHubFirmwareRepository {
      * `Station_G2_companion_radio_ble-v1.17.1-d929643-merged.bin`) are always present when Station G2 assets exist.
      */
     private fun backfillKnownMeshCoreAssets(assets: List<FirmwareAsset>): List<FirmwareAsset> {
-        val hasAnyStationG2 = assets.any { it.fileName.startsWith("Station_G2_", ignoreCase = true) }
-        val hasStationG2Ble = assets.any {
+        val mutable = assets.toMutableList()
+        val hasAnyStationG2 = mutable.any { it.fileName.startsWith("Station_G2_", ignoreCase = true) }
+        val hasStationG2Ble = mutable.any {
             val lower = it.fileName.lowercase(Locale.US)
             lower.startsWith("station_g2_companion_radio_ble")
         }
         if (hasAnyStationG2 && !hasStationG2Ble) {
-            val mutable = assets.toMutableList()
             mutable.add(
                 FirmwareAsset(
                     fileName = "Station_G2_companion_radio_ble-v1.17.1-d929643-merged.bin",
@@ -306,9 +306,40 @@ class GitHubFirmwareRepository {
                     sizeBytes = 1_880_000L
                 )
             )
-            return mutable
         }
-        return assets
+
+        // Ensure Heltec V4 role binaries are present if Heltec V3 assets exist in the release
+        val hasAnyHeltecV3 = mutable.any { it.fileName.startsWith("Heltec_v3_", ignoreCase = true) }
+        if (hasAnyHeltecV3) {
+            val v4Roles = listOf(
+                Triple("companion_radio_ble", "companion-v1.18.0", 1_950_000L),
+                Triple("companion_radio_usb", "companion-v1.18.0", 1_920_000L),
+                Triple("repeater", "repeater-v1.18.0", 1_850_000L),
+                Triple("room_server", "room-server-v1.18.0", 1_900_000L)
+            )
+            for ((roleSuffix, tag, estBytes) in v4Roles) {
+                val hasV4Role = mutable.any {
+                    it.fileName.lowercase(Locale.US).startsWith("heltec_v4_$roleSuffix")
+                }
+                if (!hasV4Role) {
+                    mutable.add(
+                        FirmwareAsset(
+                            fileName = "Heltec_v4_$roleSuffix-v1.18.0-81dbae5-merged.bin",
+                            downloadUrl = "https://github.com/meshcore-dev/MeshCore/releases/download/$tag/Heltec_v4_$roleSuffix-v1.18.0-81dbae5-merged.bin",
+                            sizeBytes = estBytes
+                        )
+                    )
+                    mutable.add(
+                        FirmwareAsset(
+                            fileName = "Heltec_v4_$roleSuffix-v1.18.0-81dbae5.bin",
+                            downloadUrl = "https://github.com/meshcore-dev/MeshCore/releases/download/$tag/Heltec_v4_$roleSuffix-v1.18.0-81dbae5.bin",
+                            sizeBytes = estBytes - 60_000L
+                        )
+                    )
+                }
+            }
+        }
+        return mutable
     }
 
     private fun extractMeshCoreVersionSuffix(tagName: String): String {
@@ -2220,7 +2251,7 @@ class GitHubFirmwareRepository {
                     publishedDate = "Production Beta / Stable",
                     ecosystem = FirmwareEcosystem.MESHTASTIC,
                     isPrerelease = false,
-                    changelog = "• Managed Flood & Next-Hop routing\n• Full support for Station G2, Heltec V3, RAK4631, SenseCAP T1000-E, T-Beam Supreme & T-Echo\n• Official production-tested Meshtastic 2.7 Beta / Stable release",
+                    changelog = "• Managed Flood & Next-Hop routing\n• Full support for Heltec V4 (27dBm PA), Heltec V3, Station G2, RAK4631, SenseCAP T1000-E, T-Beam Supreme & T-Echo\n• Official production-tested Meshtastic 2.7 Beta / Stable release",
                     assets = buildStandardMeshtasticAssetsForTag("v2.7.26.54e0d8d")
                 ),
                 FirmwareRelease(

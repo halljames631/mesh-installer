@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BleDiscoveredNode
+import com.example.model.BoardCatalog
 import com.example.model.CachedFirmwareEntry
 import com.example.model.ConnectionTransport
 import com.example.model.FirmwareEcosystem
@@ -134,6 +135,7 @@ fun FlasherWorkbenchScreen(
             onSelectMeshCoreRole = onSelectMeshCoreRole,
             onSetTDeckMeshtasticMui = onSetTDeckMeshtasticMui,
             onSelectTDeckMeshCoreFlavor = onSelectTDeckMeshCoreFlavor,
+            onSelectBoard = onSelectBoard,
             onOpenBoardPicker = onOpenBoardPicker,
             onOpenReleasesPicker = onOpenReleasesPicker,
             onSaveCurrentSelectionOffline = onSaveCurrentSelectionOffline,
@@ -170,6 +172,7 @@ private fun FlasherIdleView(
     onSelectMeshCoreRole: (MeshCoreRole) -> Unit,
     onSetTDeckMeshtasticMui: (Boolean) -> Unit,
     onSelectTDeckMeshCoreFlavor: (TDeckMeshCoreFlavor) -> Unit,
+    onSelectBoard: (HardwareBoard) -> Unit,
     onOpenBoardPicker: () -> Unit,
     onOpenReleasesPicker: () -> Unit,
     onSaveCurrentSelectionOffline: () -> Unit,
@@ -462,6 +465,50 @@ private fun FlasherIdleView(
                         }
                     }
 
+                    // Quick Radio Selector Pills (1-tap switch between Heltec V4, Heltec V3, T1000-E, RAK4631, T-Deck, Station G2, or All Radios)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val quickBoards = listOf(
+                            "heltec_v4" to "Heltec V4",
+                            "heltec_v3" to "Heltec V3",
+                            "seeed_t1000e" to "T1000-E",
+                            "rak4631" to "RAK4631",
+                            "lilygo_tdeck" to "T-Deck",
+                            "station_g2" to "Station G2"
+                        )
+                        quickBoards.forEach { (bId, shortLabel) ->
+                            val targetBoard = BoardCatalog.allBoards.firstOrNull { it.id == bId }
+                            if (targetBoard != null) {
+                                val isSelectedBoard = board.id == bId
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSelectedBoard) DarkTealCard else Color(0xFF161B22))
+                                        .border(
+                                            1.dp,
+                                            if (isSelectedBoard) CyberTeal else Color(0xFF2D3748),
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { onSelectBoard(targetBoard) }
+                                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                                        .testTag("quick_select_$bId")
+                                ) {
+                                    Text(
+                                        text = if (isSelectedBoard) "$shortLabel ✓" else shortLabel,
+                                        style = TextStyle(
+                                            fontSize = 10.sp,
+                                            fontWeight = if (isSelectedBoard) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelectedBoard) CyberCyan else TextSecondary
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Quick Hardware & Transport Selector Row
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
@@ -478,7 +525,7 @@ private fun FlasherIdleView(
                                 .testTag("change_radio_button")
                         ) {
                             Text(
-                                text = "Change Radio (${board.manufacturer}) ▾",
+                                text = "All Radios (${BoardCatalog.allBoards.size}) ▾",
                                 style = TextStyle(
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.SemiBold,

@@ -298,27 +298,6 @@ object BoardCatalog {
 
     val allBoards: List<HardwareBoard> = listOf(
         HardwareBoard(
-            id = "heltec_v3",
-            name = "Heltec WiFi LoRa 32 V3 / V3.2",
-            manufacturer = "Heltec Automation",
-            mcu = McuArchitecture.ESP32_S3,
-            loraChip = "Semtech SX1262",
-            frequencyBands = "433 / 868 / 915 MHz",
-            usbBridge = "CP2102 + ESP32-S3 Native USB",
-            vendorId = 4292, // 0x10C4 Silabs
-            productId = 60000, // 0xEA60
-            flashSizeMb = 8,
-            psramMb = 0,
-            hasOled = true,
-            hasEInk = false,
-            hasGps = false,
-            meshtasticTarget = "heltec-v3",
-            meshCoreTarget = "Heltec_v3",
-            partitions = esp32S3Partitions8Mb,
-            bootloaderGuide = "Auto-resets via CP2102 DTR/RTS. For manual ROM bootloader: Hold PRG (USR) button while plugging in USB-C or tapping RST.",
-            pinoutSummary = "SX1262 NSS:GPIO8, DIO1:GPIO14, RST:GPIO12, BUSY:GPIO13 | OLED SDA:17, SCL:18, RST:21"
-        ),
-        HardwareBoard(
             id = "heltec_v4",
             name = "Heltec WiFi LoRa 32 V4 (27dBm PA)",
             manufacturer = "Heltec Automation",
@@ -338,6 +317,27 @@ object BoardCatalog {
             partitions = esp32S3Partitions16Mb,
             bootloaderGuide = "Auto-resets via CP2102 DTR/RTS or ESP32-S3 Native USB 1200bps touch. For manual ROM bootloader: Hold PRG (USR) button while plugging in USB-C or tapping RST.",
             pinoutSummary = "ESP32-S3R2 (16MB Flash, 2MB PSRAM) | SX1262 + GC1109 27dBm PA | OLED SDA:17, SCL:18, RST:21 | Solar + GNSS Port"
+        ),
+        HardwareBoard(
+            id = "heltec_v3",
+            name = "Heltec WiFi LoRa 32 V3 / V3.2",
+            manufacturer = "Heltec Automation",
+            mcu = McuArchitecture.ESP32_S3,
+            loraChip = "Semtech SX1262",
+            frequencyBands = "433 / 868 / 915 MHz",
+            usbBridge = "CP2102 + ESP32-S3 Native USB",
+            vendorId = 4292, // 0x10C4 Silabs
+            productId = 60000, // 0xEA60
+            flashSizeMb = 8,
+            psramMb = 0,
+            hasOled = true,
+            hasEInk = false,
+            hasGps = false,
+            meshtasticTarget = "heltec-v3",
+            meshCoreTarget = "Heltec_v3",
+            partitions = esp32S3Partitions8Mb,
+            bootloaderGuide = "Auto-resets via CP2102 DTR/RTS. For manual ROM bootloader: Hold PRG (USR) button while plugging in USB-C or tapping RST.",
+            pinoutSummary = "SX1262 NSS:GPIO8, DIO1:GPIO14, RST:GPIO12, BUSY:GPIO13 | OLED SDA:17, SCL:18, RST:21"
         ),
         HardwareBoard(
             id = "rak4631",

@@ -33,12 +33,13 @@ class OfflineFirmwareVaultManager(context: Context) {
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val KEY_MY_DEVICES = "my_device_ids"
         private const val KEY_VAULT_SCHEMA_VERSION = "vault_schema_version"
-        private const val CURRENT_VAULT_SCHEMA_VERSION = 2
+        private const val CURRENT_VAULT_SCHEMA_VERSION = 3
 
         val DEFAULT_POPULAR_DEVICE_IDS = setOf(
+            "heltec_v4",
+            "heltec_v3",
             "lilygo_tdeck",
             "station_g2",
-            "heltec_v3",
             "rak4631"
         )
     }
@@ -62,6 +63,11 @@ class OfflineFirmwareVaultManager(context: Context) {
                     !isLegacySynthetic
                 }
                 writeEntriesToDiskInternal(valid)
+                // Ensure newly added Heltec V4 is included in default checked devices on upgrade
+                val existingDevices = prefs.getStringSet(KEY_MY_DEVICES, null)
+                if (existingDevices != null && "heltec_v3" in existingDevices && "heltec_v4" !in existingDevices) {
+                    prefs.edit().putStringSet(KEY_MY_DEVICES, existingDevices + "heltec_v4").apply()
+                }
             } catch (_: Exception) {
             }
             prefs.edit().putInt(KEY_VAULT_SCHEMA_VERSION, CURRENT_VAULT_SCHEMA_VERSION).apply()
