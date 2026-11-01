@@ -147,6 +147,8 @@ fun FlasherWorkbenchScreen(
             onToggleLoopbackBench = onToggleLoopbackBench,
             onImportCustomFile = onImportCustomFile,
             onClearCustomFile = onClearCustomFile,
+            onTrigger1200BpsTouch = onTrigger1200BpsTouch,
+            onTriggerEspReset = onTriggerEspReset,
             onStartFlash = onStartFlash,
             onResetFlashState = onResetFlashState,
             modifier = modifier
@@ -181,6 +183,8 @@ private fun FlasherIdleView(
     onToggleLoopbackBench: (Boolean) -> Unit,
     onImportCustomFile: () -> Unit,
     onClearCustomFile: () -> Unit,
+    onTrigger1200BpsTouch: () -> Unit,
+    onTriggerEspReset: () -> Unit,
     onStartFlash: () -> Unit,
     onResetFlashState: () -> Unit,
     modifier: Modifier = Modifier
@@ -541,6 +545,35 @@ private fun FlasherIdleView(
                                 )
                             }
                         }
+
+                        // Explicit Enter DFU Mode button for SenseCAP T1000-E / RAK4631 / T-Echo / RP2040 / ESP32-S3
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(AmberSignal.copy(alpha = 0.16f))
+                                .border(1.dp, AmberSignal.copy(alpha = 0.65f), RoundedCornerShape(6.dp))
+                                .clickable {
+                                    if (uiState.selectedTransport == ConnectionTransport.BLE_DFU ||
+                                        board.mcu.name.startsWith("NRF") ||
+                                        board.mcu.name.startsWith("RP2040")
+                                    ) {
+                                        onTrigger1200BpsTouch()
+                                    } else {
+                                        onTriggerEspReset()
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .testTag("enter_dfu_mode_button")
+                        ) {
+                            Text(
+                                text = "ENTER DFU MODE",
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AmberSignal
+                                )
+                            )
+                        }
                     }
 
                     // Dedicated BLE OTA Scanner & Target Picker when BLE_DFU is active
@@ -573,6 +606,24 @@ private fun FlasherIdleView(
                                     )
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(AmberSignal.copy(alpha = 0.2f))
+                                            .border(1.dp, AmberSignal, RoundedCornerShape(6.dp))
+                                            .clickable { onTrigger1200BpsTouch() }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            .testTag("ble_enter_dfu_button")
+                                    ) {
+                                        Text(
+                                            text = "ENTER DFU",
+                                            style = TextStyle(
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = AmberSignal
+                                            )
+                                        )
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))

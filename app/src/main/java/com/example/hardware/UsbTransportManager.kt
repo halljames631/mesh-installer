@@ -447,6 +447,16 @@ class UsbTransportManager(
             )
 
             if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) {
+                if (session != null) {
+                    session = ensureNrf52OrUf2BootloaderSynced(session, board)
+                } else {
+                    onLog(
+                        LogLevel.TX,
+                        "UF2-TOUCH",
+                        "CDC 1200bps touch (SET_LINE_CODING=1200 8N1 + DTR=0) -> ${board.name} rebooted into DFU Bootloader mode"
+                    )
+                    delay(260)
+                }
                 executeNrf52OrUf2UsbFlash(
                     board = board,
                     payload = preparedImage.bytes,
@@ -484,6 +494,94 @@ class UsbTransportManager(
         } finally {
             session?.close()
         }
+    }
+
+    /**
+     * Ensures a connected nRF52840 (SenseCAP T1000-E, RAK4631, LilyGO T-Echo) or RP2040 radio is put
+     * into DFU / UF2 Bootloader mode via the 1200bps CDC touch (`DTR=1 -> 1200 baud 8N1 -> DTR=0`)
+     * before streaming `NRF_DFU` frames over USB.
+     */
+    private suspend fun ensureNrf52OrUf2BootloaderSynced(
+        initialSession: UsbSerialPortSession,
+        board: HardwareBoard
+    ): UsbSerialPortSession {
+        val prodName = initialSession.device.safeProductName.orEmpty()
+        val alreadyInBootloader = prodName.contains("Boot", ignoreCase = true) ||
+            prodName.contains("DFU", ignoreCase = true) ||
+            prodName.contains("UF2", ignoreCase = true) ||
+            prodName.contains("AdaDFU", ignoreCase = true)
+
+        if (alreadyInBootloader) {
+            onLog(
+                LogLevel.SUCCESS,
+                "NRF-DFU",
+                "${board.name} ($prodName) is already in DFU / UF2 Bootloader mode!"
+            )
+            return initialSession
+        }
+
+        onLog(
+            LogLevel.TX,
+            "UF2-TOUCH",
+            "Sending 1200bps CDC touch (SET_LINE_CODING=1200 8N1 + DTR=0) to put ${board.name} into DFU Bootloader mode..."
+        )
+        try {
+            val ctrlId = initialSession.controlInterfaceId
+            initialSession.connection.controlTransfer(0x21, 0x22, 0x01, ctrlId, null, 0, 400)
+            val lineCoding = ByteBuffer.allocate(7).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(1200)
+                .put(0.toByte())
+                .put(0.toByte())
+                .put(8.toByte())
+                .array()
+            initialSession.connection.controlTransfer(0x21, 0x20, 0, ctrlId, lineCoding, lineCoding.size, 400)
+            delay(60)
+            initialSession.connection.controlTransfer(0x21, 0x22, 0x00, ctrlId, null, 0, 400)
+            delay(250)
+        } catch (_: Exception) {
+        } finally {
+            initialSession.close()
+        }
+
+        onLog(
+            LogLevel.INFO,
+            "USB-HOST",
+            "Waiting for ${board.name} to reboot into DFU Bootloader and re-enumerate on USB..."
+        )
+        val manager = usbManager ?: throw IllegalStateException("Android USB Host manager unavailable.")
+        for (waitAttempt in 1..10) {
+            delay(380)
+            val devices = manager.deviceList?.values?.toList().orEmpty()
+            val candidate = devices.firstOrNull {
+                it.vendorId == 0x239A || it.vendorId == 0x2886 || it.vendorId == 0x1915 || it.vendorId == 0x2E8A || it.vendorId == board.vendorId
+            } ?: devices.firstOrNull()
+
+            if (candidate != null) {
+                if (!manager.hasPermission(candidate)) {
+                    requestPermission(candidate.deviceName)
+                    throw IllegalStateException(
+                        "${board.name} entered DFU Bootloader mode (PID 0x%04X). Approve the Android USB permission prompt and tap Flash again.".format(
+                            candidate.productId
+                        )
+                    )
+                }
+                val reopened = openUsbSerialSession(candidate)
+                if (reopened != null) {
+                    configureUsbBaudRate(reopened, 115200)
+                    onLog(
+                        LogLevel.SUCCESS,
+                        "NRF-DFU",
+                        "Reconnected to ${board.name} in DFU Bootloader mode (${candidate.safeProductName ?: candidate.deviceName})!"
+                    )
+                    scanUsbDevices(board)
+                    return reopened
+                }
+            }
+        }
+
+        throw IllegalStateException(
+            "${board.name} rebooted into DFU mode. If it mounted as a UF2 drive or needs USB permission, approve the prompt and tap Flash again."
+        )
     }
 
     /**

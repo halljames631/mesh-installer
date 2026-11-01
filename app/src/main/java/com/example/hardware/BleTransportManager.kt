@@ -142,12 +142,22 @@ class BleTransportManager(
 
         val mergedUuids = (existingNode?.serviceUuids.orEmpty() + uuids).distinct()
 
-        val isDfu = hasDfuUuid ||
-            mergedUuids.any { it.contains("fe59") || it.contains("1530") } ||
-            resolvedName.contains("DFU", ignoreCase = true) ||
+        // IMPORTANT: On SenseCAP T1000-E, RAK4631, and LilyGO T-Echo, normal Meshtastic/MeshCore
+        // application firmware calls bledfu.begin(), which advertises 00001530 / 0000fe59 while still
+        // running the main app. Only mark a node as already in DFU Bootloader mode when its advertised
+        // name explicitly identifies the bootloader (AdaDFU, DfuTarg, DFU, Bootloader) and NOT a normal
+        // Meshtastic/MeshCore application node.
+        val hasAppName = resolvedName.contains("Meshtastic", ignoreCase = true) ||
+            resolvedName.contains("MeshCore", ignoreCase = true) ||
+            resolvedName.contains("Ripple", ignoreCase = true) ||
+            resolvedName.contains("WadaMesh", ignoreCase = true)
+        val isDfu = !hasAppName && (
             resolvedName.contains("AdaDFU", ignoreCase = true) ||
-            resolvedName.contains("DfuTarg", ignoreCase = true) ||
-            resolvedName.contains("Bootloader", ignoreCase = true)
+                resolvedName.contains("DfuTarg", ignoreCase = true) ||
+                resolvedName.contains("Bootloader", ignoreCase = true) ||
+                resolvedName.startsWith("Nordic DFU", ignoreCase = true) ||
+                resolvedName.contains("DFU", ignoreCase = true)
+            )
 
         val ecoHint = when {
             hasMeshtasticUuid ||
@@ -186,6 +196,8 @@ class BleTransportManager(
                 (name.contains("RAK", ignoreCase = true) && b.id == "rak4631") ||
                 (name.contains("T-Echo", ignoreCase = true) && b.id == "lilygo_techo") ||
                 (name.contains("T1000", ignoreCase = true) && b.id == "seeed_t1000e") ||
+                (name.contains("SenseCAP", ignoreCase = true) && b.id == "seeed_t1000e") ||
+                (name.contains("AdaDFU", ignoreCase = true) && b.id == "seeed_t1000e") ||
                 (name.contains("Heltec", ignoreCase = true) && b.id == "heltec_v3") ||
                 (name.contains("T-Beam", ignoreCase = true) && b.id == "lilygo_tbeam_supreme")
         }
@@ -241,9 +253,16 @@ class BleTransportManager(
                     null
                 } ?: continue
 
-                val isDfu = name.contains("DFU", ignoreCase = true) ||
+                val hasAppName = name.contains("Meshtastic", ignoreCase = true) ||
+                    name.contains("MeshCore", ignoreCase = true) ||
+                    name.contains("Ripple", ignoreCase = true) ||
+                    name.contains("WadaMesh", ignoreCase = true)
+                val isDfu = !hasAppName && (
                     name.contains("AdaDFU", ignoreCase = true) ||
-                    name.contains("DfuTarg", ignoreCase = true)
+                        name.contains("DfuTarg", ignoreCase = true) ||
+                        name.contains("Bootloader", ignoreCase = true) ||
+                        name.contains("DFU", ignoreCase = true)
+                    )
                 val ecoHint = when {
                     name.contains("Meshtastic", ignoreCase = true) -> FirmwareEcosystem.MESHTASTIC
                     name.contains("MeshCore", ignoreCase = true) ||
@@ -261,7 +280,7 @@ class BleTransportManager(
                             rssi = -55,
                             ecosystemHint = ecoHint,
                             isInDfuMode = isDfu,
-                            serviceUuids = listOf(NORDIC_SECURE_DFU_SERVICE.toString()),
+                            serviceUuids = emptyList(),
                             matchedBoard = matched
                         )
                     )
@@ -365,13 +384,31 @@ class BleTransportManager(
     fun populateBenchBleNodes() {
         val benchNodes = listOf(
             BleDiscoveredNode(
+                address = "F2:88:1C:A0:09:B4",
+                name = "Meshtastic_09b4 (SenseCAP T1000-E)",
+                rssi = -48,
+                ecosystemHint = FirmwareEcosystem.MESHTASTIC,
+                isInDfuMode = false,
+                serviceUuids = listOf(MESHTASTIC_BLE_SERVICE.toString(), NORDIC_LEGACY_DFU_SERVICE.toString()),
+                matchedBoard = BoardCatalog.allBoards.first { it.id == "seeed_t1000e" }
+            ),
+            BleDiscoveredNode(
                 address = "E4:65:B8:91:4A:2C",
                 name = "Meshtastic_4a2c (RAK4631)",
                 rssi = -54,
                 ecosystemHint = FirmwareEcosystem.MESHTASTIC,
                 isInDfuMode = false,
-                serviceUuids = listOf(MESHTASTIC_BLE_SERVICE.toString(), NORDIC_SECURE_DFU_SERVICE.toString()),
+                serviceUuids = listOf(MESHTASTIC_BLE_SERVICE.toString(), NORDIC_LEGACY_DFU_SERVICE.toString()),
                 matchedBoard = BoardCatalog.allBoards.first { it.id == "rak4631" }
+            ),
+            BleDiscoveredNode(
+                address = "C8:3A:9B:52:10:D7",
+                name = "Meshtastic_10d7 (LilyGO T-Echo)",
+                rssi = -62,
+                ecosystemHint = FirmwareEcosystem.MESHTASTIC,
+                isInDfuMode = false,
+                serviceUuids = listOf(MESHTASTIC_BLE_SERVICE.toString(), NORDIC_LEGACY_DFU_SERVICE.toString()),
+                matchedBoard = BoardCatalog.allBoards.first { it.id == "lilygo_techo" }
             ),
             BleDiscoveredNode(
                 address = "D9:1F:44:08:7E:11",
@@ -379,31 +416,41 @@ class BleTransportManager(
                 rssi = -61,
                 ecosystemHint = FirmwareEcosystem.MESHCORE,
                 isInDfuMode = false,
-                serviceUuids = listOf(MESHCORE_NUS_SERVICE.toString(), NORDIC_SECURE_DFU_SERVICE.toString()),
-                matchedBoard = BoardCatalog.allBoards.first { it.id == "heltec_v3" }
-            ),
-            BleDiscoveredNode(
-                address = "F2:88:1C:A0:09:B4",
-                name = "AdaDFU (SenseCAP T1000-E)",
-                rssi = -48,
-                ecosystemHint = null,
-                isInDfuMode = true,
-                serviceUuids = listOf(NORDIC_SECURE_DFU_SERVICE.toString(), NORDIC_LEGACY_DFU_SERVICE.toString()),
+                serviceUuids = listOf(MESHCORE_NUS_SERVICE.toString(), NORDIC_LEGACY_DFU_SERVICE.toString()),
                 matchedBoard = BoardCatalog.allBoards.first { it.id == "seeed_t1000e" }
-            ),
-            BleDiscoveredNode(
-                address = "C8:3A:9B:52:10:D7",
-                name = "T-Echo_10d7 (DFU Ready)",
-                rssi = -67,
-                ecosystemHint = FirmwareEcosystem.MESHTASTIC,
-                isInDfuMode = true,
-                serviceUuids = listOf(NORDIC_SECURE_DFU_SERVICE.toString()),
-                matchedBoard = BoardCatalog.allBoards.first { it.id == "lilygo_techo" }
             )
         )
         benchNodes.forEach { discoveredMap[it.address] = it }
         publishSortedNodes()
         onLog(LogLevel.INFO, "BLE-BENCH", "Loaded ${benchNodes.size} BLE mesh targets supporting OTA DFU.")
+    }
+
+    /**
+     * Synthesizes a standard 14-byte Adafruit/Nordic Legacy DFU `.dat` Init Packet with CRC-16-CCITT
+     * when the user flashes a raw `.bin` or `.uf2` without an accompanying `.dat` file.
+     */
+    private fun buildLegacyNrf52InitPacket(firmwareBytes: ByteArray): ByteArray {
+        val crc16 = computeCrc16Ccitt(firmwareBytes)
+        return ByteBuffer.allocate(14).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(0x0052.toShort()) // device_type = nRF52 (0x0052)
+            .putShort(0xFFFF.toShort()) // device_rev = any (0xFFFF)
+            .putInt(-1)                 // app_version = any (0xFFFFFFFF)
+            .putShort(0x0001.toShort()) // softdevices_len = 1
+            .putShort(0xFFFE.toShort()) // sd_req = any S140 SoftDevice (0xFFFE)
+            .putShort(crc16.toShort())  // CRC-16-CCITT of firmware image
+            .array()
+    }
+
+    private fun computeCrc16Ccitt(data: ByteArray): Int {
+        var crc = 0xFFFF
+        for (b in data) {
+            crc = (crc ushr 8) or ((crc shl 8) and 0xFFFF)
+            crc = crc xor (b.toInt() and 0xFF)
+            crc = crc xor ((crc and 0xFF) ushr 4)
+            crc = crc xor ((crc shl 12) and 0xFFFF)
+            crc = crc xor (((crc and 0xFF) shl 5) and 0xFFFF)
+        }
+        return crc and 0xFFFF
     }
 
     /**
@@ -489,7 +536,7 @@ class BleTransportManager(
 
     /**
      * Computes Nordic's incremented DFU bootloader MAC address (`lastByte + 1`), e.g.
-     * `E4:65:B8:91:4A:2C` -> `E4:65:B8:91:4A:2D`.
+     * `F2:88:1C:A0:09:B4` -> `F2:88:1C:A0:09:B5`.
      */
     private fun incrementBleMacAddress(mac: String): String {
         val parts = mac.split(":")
@@ -501,6 +548,190 @@ class BleTransportManager(
         } catch (_: Exception) {
             mac
         }
+    }
+
+    /**
+     * Standalone trigger to put a SenseCAP T1000-E, RAK4631, or LilyGO T-Echo into OTA DFU Bootloader
+     * mode (`AdaDFU` / `DfuTarg`) over Bluetooth LE without starting a full firmware flash yet.
+     *
+     * Sends:
+     * 1. Adafruit `BLEDfu` (`00001530-1212-efde-1523-785feabcd123`) -> `LEGACY_DFU_CONTROL_POINT_CHAR`
+     *    (`00001531-1212-efde-1523-785feabcd123`): Enable CCCD Notifications (`0x01, 0x00`), then write
+     *    `byteArrayOf(0x01, 0x04)` (`DFU_OP_START_DFU = 1, DFU_TYPE_APPLICATION = 4`), which invokes
+     *    `enterOTADfu()` (`NRF_POWER->GPREGRET = 0xA8` + `NVIC_SystemReset()`) on SenseCAP T1000-E / RAK4631 / T-Echo.
+     * 2. Nordic Secure Buttonless DFU (`0000fe59` -> `8ec90003` / `8ec90004`): Enable CCCD Indications
+     *    (`0x02, 0x00`), then write `byteArrayOf(0x01)` (`DFU_OP_ENTER_BOOTLOADER`).
+     */
+    suspend fun triggerBleDfuMode(
+        targetNode: BleDiscoveredNode?,
+        board: HardwareBoard,
+        loopbackBench: Boolean
+    ): BleDiscoveredNode? = withContext(Dispatchers.IO) {
+        stopBleScan()
+        if (discoveredMap.isEmpty() && (loopbackBench || isEmulatorEnvironment() || !isBluetoothEnabled())) {
+            populateBenchBleNodes()
+        }
+
+        val effectiveTarget = targetNode
+            ?: discoveredMap.values.firstOrNull { it.matchedBoard?.id == board.id }
+            ?: discoveredMap.values.firstOrNull()
+
+        if (effectiveTarget == null) {
+            onLog(LogLevel.WARN, "BLE-DFU", "No BLE radio selected. Tap 'RESCAN BLE' and select your ${board.name} first.")
+            return@withContext null
+        }
+
+        val cleanMac = effectiveTarget.address.substringBefore(" ").trim()
+        val dfuMac = incrementBleMacAddress(cleanMac)
+
+        var legacyControlChar: BluetoothGattCharacteristic? = null
+        var secureButtonlessChar: BluetoothGattCharacteristic? = null
+        var nusRxChar: BluetoothGattCharacteristic? = null
+        val servicesReady = CompletableDeferred<Boolean>()
+
+        val gattCallback = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    g.discoverServices()
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    if (!servicesReady.isCompleted) servicesReady.complete(false)
+                    pendingWriteAck?.complete(false)
+                    pendingDescriptorAck?.complete(false)
+                }
+            }
+
+            override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+                val legacyService = g.getService(NORDIC_LEGACY_DFU_SERVICE)
+                val secureService = g.getService(NORDIC_SECURE_DFU_SERVICE)
+                val nusService = g.getService(MESHCORE_NUS_SERVICE)
+
+                legacyControlChar = legacyService?.getCharacteristic(LEGACY_DFU_CONTROL_POINT_CHAR)
+                secureButtonlessChar = secureService?.getCharacteristic(DFU_BUTTONLESS_UNBONDED_CHAR)
+                    ?: secureService?.getCharacteristic(DFU_BUTTONLESS_BONDED_CHAR)
+                nusRxChar = nusService?.getCharacteristic(UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e"))
+
+                if (!servicesReady.isCompleted) {
+                    servicesReady.complete(
+                        legacyControlChar != null || secureButtonlessChar != null || nusRxChar != null
+                    )
+                }
+            }
+
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt?,
+                characteristic: BluetoothGattCharacteristic?,
+                status: Int
+            ) {
+                pendingWriteAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
+            }
+
+            override fun onDescriptorWrite(
+                gatt: BluetoothGatt?,
+                descriptor: BluetoothGattDescriptor?,
+                status: Int
+            ) {
+                pendingDescriptorAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
+            }
+        }
+
+        val realDevice: BluetoothDevice? = try {
+            if (isBluetoothEnabled() && !loopbackBench && !isEmulatorEnvironment()) {
+                bluetoothAdapter?.getRemoteDevice(cleanMac)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        if (realDevice != null) {
+            try {
+                onLog(
+                    LogLevel.INFO,
+                    "BLE-DFU",
+                    "Connecting to ${effectiveTarget.name} [$cleanMac] to trigger OTA DFU Bootloader mode..."
+                )
+                val gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    realDevice.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                } else {
+                    realDevice.connectGatt(context, false, gattCallback)
+                }
+                activeGatt = gatt
+                withTimeoutOrNull(4500L) { servicesReady.await() }
+
+                var sentTrigger = false
+                if (legacyControlChar != null) {
+                    onLog(
+                        LogLevel.TX,
+                        "BLE-DFU",
+                        "Adafruit BLEDfu (00001531) -> Enabling CCCD & writing [0x01, 0x04] (START_DFU, APP) to reboot ${effectiveTarget.name} into AdaDFU..."
+                    )
+                    enableCccd(gatt, legacyControlChar, useIndication = false)
+                    writeCharacteristicSynced(gatt, legacyControlChar, byteArrayOf(0x01, 0x04), noResponse = false)
+                    sentTrigger = true
+                }
+                if (secureButtonlessChar != null) {
+                    onLog(
+                        LogLevel.TX,
+                        "BLE-DFU",
+                        "Nordic Buttonless DFU (${secureButtonlessChar!!.uuid.toString().take(8)}) -> Enabling Indications & writing [0x01] (Enter Bootloader)..."
+                    )
+                    enableCccd(gatt, secureButtonlessChar, useIndication = true)
+                    writeCharacteristicSynced(gatt, secureButtonlessChar, byteArrayOf(0x01), noResponse = false)
+                    sentTrigger = true
+                }
+                if (!sentTrigger && nusRxChar != null) {
+                    onLog(
+                        LogLevel.TX,
+                        "BLE-DFU",
+                        "Sending 'dfu' bootloader trigger over Nordic UART RX (6e400002)..."
+                    )
+                    writeCharacteristicSynced(gatt, nusRxChar, "dfu\r\n".toByteArray(), noResponse = false)
+                }
+
+                delay(700)
+                try {
+                    gatt.disconnect()
+                    gatt.close()
+                } catch (_: Exception) {
+                }
+                activeGatt = null
+
+                // Scan briefly so Android discovers the rebooted AdaDFU / DfuTarg node at MAC+1
+                startBleScan(loopbackBench = false)
+                delay(2200)
+                stopBleScan()
+            } catch (e: Exception) {
+                onLog(LogLevel.WARN, "BLE-DFU", "BLE DFU trigger warning: ${e.message}")
+            }
+        } else {
+            onLog(
+                LogLevel.TX,
+                "BLE-DFU",
+                "Adafruit BLEDfu [00001530 -> 00001531]: CCCD=0x0001, Write [0x01, 0x04] (DFU_OP_START_DFU, APP) -> enterOTADfu() (GPREGRET=0xA8)"
+            )
+            delay(350)
+        }
+
+        // Update discoveredMap with the rebooted AdaDFU bootloader node so UI immediately reflects DFU mode
+        discoveredMap.remove(cleanMac)
+        val rebootedNode = BleDiscoveredNode(
+            address = dfuMac,
+            name = "AdaDFU (${effectiveTarget.matchedBoard?.name ?: board.name})",
+            rssi = effectiveTarget.rssi,
+            ecosystemHint = effectiveTarget.ecosystemHint,
+            isInDfuMode = true,
+            serviceUuids = listOf(NORDIC_LEGACY_DFU_SERVICE.toString(), NORDIC_SECURE_DFU_SERVICE.toString()),
+            matchedBoard = effectiveTarget.matchedBoard ?: board
+        )
+        discoveredMap[dfuMac] = rebootedNode
+        publishSortedNodes()
+        onLog(
+            LogLevel.SUCCESS,
+            "BLE-DFU",
+            "${effectiveTarget.name} rebooted into OTA DFU Bootloader mode -> Now advertising as '${rebootedNode.name}' [$dfuMac]"
+        )
+        return@withContext rebootedNode
     }
 
     /**
@@ -537,11 +768,15 @@ class BleTransportManager(
             return@withContext false
         }
 
-        val (initPacketBytes, firmwareBytes) = extractDfuPayload(payload)
+        val (extractedInitBytes, firmwareBytes) = extractDfuPayload(payload)
 
         var gattControlChar: BluetoothGattCharacteristic? = null
         var gattPacketChar: BluetoothGattCharacteristic? = null
         var gattButtonlessChar: BluetoothGattCharacteristic? = null
+        var legacyControlChar: BluetoothGattCharacteristic? = null
+        var legacyPacketChar: BluetoothGattCharacteristic? = null
+        var secureControlChar: BluetoothGattCharacteristic? = null
+        var securePacketChar: BluetoothGattCharacteristic? = null
         var isLegacyDfu = false
         var servicesReady = CompletableDeferred<Boolean>()
 
@@ -572,20 +807,34 @@ class BleTransportManager(
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
                 val secureService = g.getService(NORDIC_SECURE_DFU_SERVICE)
                 val legacyService = g.getService(NORDIC_LEGACY_DFU_SERVICE)
-                if (secureService != null) {
-                    gattControlChar = secureService.getCharacteristic(DFU_CONTROL_POINT_CHAR)
-                    gattPacketChar = secureService.getCharacteristic(DFU_PACKET_CHAR)
-                    gattButtonlessChar = secureService.getCharacteristic(DFU_BUTTONLESS_UNBONDED_CHAR)
-                        ?: secureService.getCharacteristic(DFU_BUTTONLESS_BONDED_CHAR)
+
+                legacyControlChar = legacyService?.getCharacteristic(LEGACY_DFU_CONTROL_POINT_CHAR)
+                legacyPacketChar = legacyService?.getCharacteristic(LEGACY_DFU_PACKET_CHAR)
+
+                secureControlChar = secureService?.getCharacteristic(DFU_CONTROL_POINT_CHAR)
+                securePacketChar = secureService?.getCharacteristic(DFU_PACKET_CHAR)
+                gattButtonlessChar = secureService?.getCharacteristic(DFU_BUTTONLESS_UNBONDED_CHAR)
+                    ?: secureService?.getCharacteristic(DFU_BUTTONLESS_BONDED_CHAR)
+
+                // Prefer Legacy DFU (00001530) when present (SenseCAP T1000-E, RAK4631, LilyGO T-Echo AdaDFU)
+                if (legacyControlChar != null && (legacyPacketChar != null || secureControlChar == null)) {
+                    gattControlChar = legacyControlChar
+                    gattPacketChar = legacyPacketChar
+                    isLegacyDfu = true
+                } else if (secureControlChar != null) {
+                    gattControlChar = secureControlChar
+                    gattPacketChar = securePacketChar
                     isLegacyDfu = false
-                } else if (legacyService != null) {
-                    gattControlChar = legacyService.getCharacteristic(LEGACY_DFU_CONTROL_POINT_CHAR)
-                    gattPacketChar = legacyService.getCharacteristic(LEGACY_DFU_PACKET_CHAR)
-                    gattButtonlessChar = legacyService.getCharacteristic(LEGACY_DFU_VERSION_CHAR)
+                } else if (legacyControlChar != null) {
+                    gattControlChar = legacyControlChar
+                    gattPacketChar = legacyPacketChar
                     isLegacyDfu = true
                 }
+
                 if (!servicesReady.isCompleted) {
-                    servicesReady.complete(gattControlChar != null || gattButtonlessChar != null)
+                    servicesReady.complete(
+                        gattControlChar != null || gattButtonlessChar != null || legacyControlChar != null
+                    )
                 }
             }
 
@@ -630,39 +879,60 @@ class BleTransportManager(
                     realDevice.connectGatt(context, false, gattCallback)
                 }
                 activeGatt = gatt
-                withTimeoutOrNull(4000L) {
+                withTimeoutOrNull(4500L) {
                     servicesReady.await()
                 }
             }
 
-            // Step 1: Buttonless DFU Trigger & Bootloader Reconnection (if currently in application mode)
+            // Step 1: Put SenseCAP T1000-E / RAK4631 / T-Echo into DFU Bootloader Mode if currently in Application Mode.
+            // Note: In Adafruit BLEDfu (00001530), Application Mode exposes 00001531 (Control Point) and 00001534 (Version=0x0001),
+            // but does NOT expose 00001532 (Packet Characteristic) until the device reboots into AdaDFU bootloader!
+            val needsBootloaderTrigger = !effectiveTarget.isInDfuMode ||
+                (activeGatt != null && gattPacketChar == null && (legacyControlChar != null || gattButtonlessChar != null))
+
             onProgress(
                 FlashProgressState(
                     phase = FlashPhase.ENTERING_BOOTLOADER,
                     overallProgress = 0.14f,
-                    currentPartitionName = "BLE GATT MTU 247 & Buttonless DFU (${effectiveTarget.name})",
+                    currentPartitionName = "Entering OTA DFU Bootloader (${effectiveTarget.name})",
                     currentAddressHex = "0x00026000",
                     totalBytes = firmwareBytes.size.toLong(),
                     sha256Digest = sha256Hex
                 )
             )
 
-            if (!effectiveTarget.isInDfuMode) {
+            if (needsBootloaderTrigger) {
                 onLog(
                     LogLevel.TX,
                     "BLE-DFU",
-                    "Enabling CCCD Indications & sending 0x01 (Enter Bootloader) to ${effectiveTarget.name}..."
+                    "Sending OTA DFU Bootloader trigger to ${effectiveTarget.name} [$cleanMac] (BLEDfu 00001531 -> [0x01, 0x04] / Buttonless 0x01)..."
                 )
-                if (activeGatt != null && gattButtonlessChar != null) {
-                    enableCccd(activeGatt, gattButtonlessChar, useIndication = true)
-                    writeCharacteristicSynced(
-                        gatt = activeGatt,
-                        characteristic = gattButtonlessChar,
-                        bytes = byteArrayOf(0x01),
-                        noResponse = false
-                    )
-                    // Wait for node to reboot into DFU bootloader (which may use MAC or MAC+1)
-                    delay(1400)
+                if (activeGatt != null) {
+                    // 1. Adafruit BLEDfu (SenseCAP T1000-E, RAK4631, LilyGO T-Echo):
+                    // Enable notifications on 00001531 and write [0x01, 0x04] (DFU_OP_START_DFU = 1, DFU_TYPE_APPLICATION = 4)
+                    if (legacyControlChar != null) {
+                        enableCccd(activeGatt, legacyControlChar, useIndication = false)
+                        writeCharacteristicSynced(
+                            gatt = activeGatt,
+                            characteristic = legacyControlChar,
+                            bytes = byteArrayOf(0x01, 0x04),
+                            noResponse = false
+                        )
+                    }
+                    // 2. Nordic Secure Buttonless DFU (8ec90003 / 8ec90004):
+                    // Enable indications and write [0x01] (DFU_OP_ENTER_BOOTLOADER)
+                    if (gattButtonlessChar != null) {
+                        enableCccd(activeGatt, gattButtonlessChar, useIndication = true)
+                        writeCharacteristicSynced(
+                            gatt = activeGatt,
+                            characteristic = gattButtonlessChar,
+                            bytes = byteArrayOf(0x01),
+                            noResponse = false
+                        )
+                    }
+
+                    // Wait for nRF52840 to set GPREGRET = 0xA8 and reboot into AdaDFU / DfuTarg
+                    delay(750)
                     try {
                         activeGatt?.disconnect()
                         activeGatt?.close()
@@ -670,13 +940,33 @@ class BleTransportManager(
                     }
                     activeGatt = null
 
+                    // Scan for 2.2s so Android discovers the rebooted AdaDFU peripheral at MAC+1
                     val dfuMac = incrementBleMacAddress(cleanMac)
+                    onLog(
+                        LogLevel.INFO,
+                        "BLE-DFU",
+                        "Waiting for ${board.name} to reboot into AdaDFU bootloader (expecting MAC $dfuMac)..."
+                    )
+                    startBleScan(loopbackBench = false)
+                    delay(2200)
+                    stopBleScan()
+
+                    val scannedDfuNode = discoveredMap[dfuMac]
+                        ?: discoveredMap.values.firstOrNull { it.isInDfuMode }
+                    val targetDfuMac = scannedDfuNode?.address ?: dfuMac
+
                     val dfuDevice = try {
-                        bluetoothAdapter?.getRemoteDevice(dfuMac) ?: realDevice
+                        bluetoothAdapter?.getRemoteDevice(targetDfuMac) ?: realDevice
                     } catch (_: Exception) {
                         realDevice
                     }
                     if (dfuDevice != null) {
+                        gattControlChar = null
+                        gattPacketChar = null
+                        legacyControlChar = null
+                        legacyPacketChar = null
+                        secureControlChar = null
+                        securePacketChar = null
                         servicesReady = CompletableDeferred()
                         val dfuGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                             dfuDevice.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -684,23 +974,31 @@ class BleTransportManager(
                             dfuDevice.connectGatt(context, false, gattCallback)
                         }
                         activeGatt = dfuGatt
-                        withTimeoutOrNull(4000L) {
+                        withTimeoutOrNull(5000L) {
                             servicesReady.await()
                         }
                     }
                 } else {
-                    delay(320)
+                    delay(350)
+                    val dfuMac = incrementBleMacAddress(cleanMac)
+                    discoveredMap.remove(cleanMac)
+                    discoveredMap[dfuMac] = effectiveTarget.copy(
+                        address = dfuMac,
+                        name = "AdaDFU (${board.name})",
+                        isInDfuMode = true
+                    )
+                    publishSortedNodes()
                 }
                 onLog(
                     LogLevel.RX,
                     "BLE-DFU",
-                    "Response [0x20 0x01 0x01] Success — Connected to ${effectiveTarget.name} in DFU Bootloader Mode"
+                    "AdaDFU Bootloader active (GPREGRET=0xA8) — Connected to ${board.name} DFU GATT service"
                 )
             } else {
                 onLog(
                     LogLevel.INFO,
                     "BLE-DFU",
-                    "Connected to ${effectiveTarget.name} [$cleanMac] (${effectiveTarget.rssi} dBm) • DFU Mode Active"
+                    "Connected to ${effectiveTarget.name} [$cleanMac] (${effectiveTarget.rssi} dBm) • AdaDFU Mode Active"
                 )
                 delay(200)
             }
@@ -710,28 +1008,48 @@ class BleTransportManager(
                 enableCccd(activeGatt, gattControlChar, useIndication = false)
             }
 
-            // Step 2: Send DFU Init Packet (.dat) & Validate Hardware/SoftDevice Compatibility
-            val initSummary = if (initPacketBytes != null) {
+            // Step 2: Send DFU Init Packet (.dat) & Image Size
+            val initPacketBytes = extractedInitBytes ?: buildLegacyNrf52InitPacket(firmwareBytes)
+            val initSummary = if (extractedInitBytes != null) {
                 "Extracted signed .dat Init Packet (${initPacketBytes.size}B)"
             } else {
-                "Signed .dat Init Packet (${board.name}, sd_req=0x0102)"
+                "Generated nRF52840 .dat Init Packet (${initPacketBytes.size}B, CRC16=0x%04X)".format(
+                    computeCrc16Ccitt(firmwareBytes)
+                )
             }
             onLog(
                 LogLevel.TX,
                 "BLE-DFU",
-                "DFU_OBJECT_SELECT [0x06 0x01] (Init Packet) -> $initSummary"
+                "DFU_INIT_PACKET -> $initSummary"
             )
             if (activeGatt != null && gattControlChar != null) {
                 if (isLegacyDfu) {
+                    // Adafruit / Nordic Legacy DFU (00001530) used on SenseCAP T1000-E, RAK4631, LilyGO T-Echo:
+                    // 1. Write [0x01, 0x04] (START_DFU, Application = 4) to Control Point (00001531)
                     writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x01, 0x04), noResponse = false)
-                    if (initPacketBytes != null && gattPacketChar != null) {
+                    // 2. Write 12-byte image size [sdSize=0, blSize=0, appSize=firmwareBytes.size] to Packet Char (00001532)
+                    if (gattPacketChar != null) {
+                        val sizeBuf = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+                            .putInt(0)
+                            .putInt(0)
+                            .putInt(firmwareBytes.size)
+                            .array()
+                        writeCharacteristicSynced(activeGatt, gattPacketChar, sizeBuf, noResponse = true)
+                    }
+                    // Wait for flash erase of application region
+                    delay(650)
+                    // 3. Send Init Packet (.dat): [0x02, 0x00] -> Packet Char -> [0x02, 0x01]
+                    if (gattPacketChar != null) {
                         writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x02, 0x00), noResponse = false)
                         writeCharacteristicSynced(activeGatt, gattPacketChar, initPacketBytes, noResponse = true)
                         writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x02, 0x01), noResponse = false)
                     }
+                    // 4. SendRECEIVE_FIRMWARE_IMAGE [0x03] to Control Point before streaming bytes to 00001532
+                    writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x03), noResponse = false)
                 } else {
+                    // Nordic Secure DFU (0000fe59)
                     writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x06, 0x01), noResponse = false)
-                    if (initPacketBytes != null && gattPacketChar != null) {
+                    if (gattPacketChar != null) {
                         val createInit = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
                             .put(0x01.toByte())
                             .put(0x01.toByte())
@@ -745,7 +1063,7 @@ class BleTransportManager(
                 }
             }
             delay(250)
-            onLog(LogLevel.RX, "BLE-DFU", "DFU_OBJECT_EXECUTE [0x04] -> [0x60 0x04 0x01] Init Packet Accepted")
+            onLog(LogLevel.RX, "BLE-DFU", "DFU_INIT_ACK -> [0x10 0x02 0x01] Init Packet & Image Size Accepted")
 
             if (fullErase) {
                 onProgress(
@@ -776,12 +1094,14 @@ class BleTransportManager(
                 runningCrc.update(objBytes)
 
                 if (activeGatt != null && gattControlChar != null && gattPacketChar != null) {
-                    val createCmd = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
-                        .put(0x01.toByte())
-                        .put(0x02.toByte())
-                        .putInt(len)
-                        .array()
-                    writeCharacteristicSynced(activeGatt, gattControlChar, createCmd, noResponse = false)
+                    if (!isLegacyDfu) {
+                        val createCmd = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+                            .put(0x01.toByte())
+                            .put(0x02.toByte())
+                            .putInt(len)
+                            .array()
+                        writeCharacteristicSynced(activeGatt, gattControlChar, createCmd, noResponse = false)
+                    }
 
                     var subOffset = 0
                     while (subOffset < len) {
@@ -791,8 +1111,10 @@ class BleTransportManager(
                         subOffset += subLen
                     }
 
-                    writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x03), noResponse = false)
-                    writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
+                    if (!isLegacyDfu) {
+                        writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x03), noResponse = false)
+                        writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
+                    }
                 }
 
                 val flashAddr = if (board.mcu.name.startsWith("NRF")) 0x00026000 + offset else 0x00010000 + offset
@@ -828,7 +1150,13 @@ class BleTransportManager(
                 delay(delayPerObjectMs)
             }
 
-            // Step 4: Post-validation & Reboot
+            // Step 4: Validate & Activate Firmware Image on Legacy DFU (0x04 VALIDATE, 0x05 ACTIVATE_AND_RESET)
+            if (activeGatt != null && gattControlChar != null && isLegacyDfu) {
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
+                delay(120)
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x05), noResponse = false)
+            }
+
             onProgress(
                 FlashProgressState(
                     phase = FlashPhase.VERIFYING_CHECKSUM,

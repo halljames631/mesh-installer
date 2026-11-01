@@ -1034,11 +1034,29 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
     fun trigger1200BpsDfuTouch() {
         val state = _uiState.value
         viewModelScope.launch {
-            usbManager.trigger1200BpsBootloaderTouch(
-                attached = state.selectedUsbDevice,
-                board = state.selectedBoard,
-                loopbackBench = state.loopbackTestBench
-            )
+            if (state.selectedTransport == ConnectionTransport.BLE_DFU ||
+                (state.selectedUsbDevice == null && state.selectedBleNode != null)
+            ) {
+                val rebooted = bleManager.triggerBleDfuMode(
+                    targetNode = state.selectedBleNode,
+                    board = state.selectedBoard,
+                    loopbackBench = state.loopbackTestBench
+                )
+                if (rebooted != null) {
+                    _uiState.update {
+                        it.copy(
+                            selectedBleNode = rebooted,
+                            selectedBoard = rebooted.matchedBoard ?: it.selectedBoard
+                        )
+                    }
+                }
+            } else {
+                usbManager.trigger1200BpsBootloaderTouch(
+                    attached = state.selectedUsbDevice,
+                    board = state.selectedBoard,
+                    loopbackBench = state.loopbackTestBench
+                )
+            }
         }
     }
 
