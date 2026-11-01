@@ -59,7 +59,7 @@ Flash, update, or configure radio nodes directly from your Android phone or tabl
 |---|---|---|---|
 | **LilyGO T-Deck / T-Deck Plus** | ESP32-S3 (16MB Flash) | USB OTG / CDC | Meshtastic (MUI & BaseUI), MeshCore (Ripple & WadaMesh) |
 | **B&Q Station G2 (3.5W High-Power)** | ESP32-S3 (16MB Flash) | USB OTG / JTAG | Meshtastic, MeshCore |
-| **Heltec WiFi LoRa 32 (V3 / V2)** | ESP32-S3 / ESP32 | USB OTG (CP2102 / CH9102) | Meshtastic, MeshCore |
+| **Heltec WiFi LoRa 32 (V4 / V3)** | ESP32-S3 (16MB / 8MB Flash) | USB OTG (CP2102 & Native USB) | Meshtastic, MeshCore |
 | **RAK Wireless RAK4631 (WisBlock)** | Nordic nRF52840 | USB CDC & BLE DFU | Meshtastic, MeshCore |
 | **Seeed Studio SenseCAP T1000-E** | Nordic nRF52840 | USB CDC & BLE DFU | Meshtastic |
 | **LilyGO T-Beam / T-Beam Supreme** | ESP32 / ESP32-S3 | USB OTG | Meshtastic, MeshCore |

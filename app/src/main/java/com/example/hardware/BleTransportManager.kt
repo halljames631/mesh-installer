@@ -204,6 +204,7 @@ class BleTransportManager(
                 (name.contains("T1000", ignoreCase = true) && b.id == "seeed_t1000e") ||
                 (name.contains("SenseCAP", ignoreCase = true) && b.id == "seeed_t1000e") ||
                 (name.contains("AdaDFU", ignoreCase = true) && b.id == "seeed_t1000e") ||
+                (name.contains("Heltec", ignoreCase = true) && name.contains("V4", ignoreCase = true) && b.id == "heltec_v4") ||
                 (name.contains("Heltec", ignoreCase = true) && b.id == "heltec_v3") ||
                 (name.contains("T-Beam", ignoreCase = true) && b.id == "lilygo_tbeam_supreme")
         }

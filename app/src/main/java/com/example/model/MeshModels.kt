@@ -319,6 +319,27 @@ object BoardCatalog {
             pinoutSummary = "SX1262 NSS:GPIO8, DIO1:GPIO14, RST:GPIO12, BUSY:GPIO13 | OLED SDA:17, SCL:18, RST:21"
         ),
         HardwareBoard(
+            id = "heltec_v4",
+            name = "Heltec WiFi LoRa 32 V4 (27dBm PA)",
+            manufacturer = "Heltec Automation",
+            mcu = McuArchitecture.ESP32_S3,
+            loraChip = "Semtech SX1262 + 27dBm PA (GC1109)",
+            frequencyBands = "433 / 868 / 915 MHz",
+            usbBridge = "CP2102 + ESP32-S3 Native USB",
+            vendorId = 4292, // 0x10C4 Silabs + 0x303A ESP32-S3 Native USB
+            productId = 60000, // 0xEA60
+            flashSizeMb = 16,
+            psramMb = 2,
+            hasOled = true,
+            hasEInk = false,
+            hasGps = true,
+            meshtasticTarget = "heltec-v4",
+            meshCoreTarget = "Heltec_v4",
+            partitions = esp32S3Partitions16Mb,
+            bootloaderGuide = "Auto-resets via CP2102 DTR/RTS or ESP32-S3 Native USB 1200bps touch. For manual ROM bootloader: Hold PRG (USR) button while plugging in USB-C or tapping RST.",
+            pinoutSummary = "ESP32-S3R2 (16MB Flash, 2MB PSRAM) | SX1262 + GC1109 27dBm PA | OLED SDA:17, SCL:18, RST:21 | Solar + GNSS Port"
+        ),
+        HardwareBoard(
             id = "rak4631",
             name = "RAKwireless WisBlock RAK4631",
             manufacturer = "RAKwireless",
@@ -653,6 +674,7 @@ object BoardCatalog {
                 (nameLower.contains("t-echo") && it.id == "lilygo_techo") ||
                 (nameLower.contains("t1000") && it.id == "seeed_t1000e") ||
                 (nameLower.contains("t-deck") && it.id == "lilygo_tdeck") ||
+                (nameLower.contains("heltec") && (nameLower.contains("v4") || nameLower.contains("v 4")) && it.id == "heltec_v4") ||
                 (nameLower.contains("heltec") && it.id == "heltec_v3")
         }?.let { return it }
 

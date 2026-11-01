@@ -278,6 +278,7 @@ class ExampleRobolectricTest {
                 changelog = "Room Server release",
                 assets = listOf(
                     FirmwareAsset("Heltec_v3_room_server-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v3_room_server-v1.18.0-81dbae5-merged.bin", 1900000L),
+                    FirmwareAsset("Heltec_v4_room_server-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v4_room_server-v1.18.0-81dbae5-merged.bin", 1900000L),
                     FirmwareAsset("RAK_4631_room_server-v1.18.0-81dbae5.uf2", "https://example.com/RAK_4631_room_server-v1.18.0-81dbae5.uf2", 750000L),
                     FirmwareAsset("Station_G2_room_server-v1.18.0-81dbae5-merged.bin", "https://example.com/Station_G2_room_server-v1.18.0-81dbae5-merged.bin", 1900000L),
                     FirmwareAsset("Station_G3_room_server-v1.18.0-81dbae5-merged.bin", "https://example.com/Station_G3_room_server-v1.18.0-81dbae5-merged.bin", 1900000L),
@@ -295,6 +296,7 @@ class ExampleRobolectricTest {
                 changelog = "Repeater release",
                 assets = listOf(
                     FirmwareAsset("Heltec_v3_repeater-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v3_repeater-v1.18.0-81dbae5-merged.bin", 1850000L),
+                    FirmwareAsset("Heltec_v4_repeater-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v4_repeater-v1.18.0-81dbae5-merged.bin", 1850000L),
                     FirmwareAsset("RAK_4631_repeater-v1.18.0-81dbae5.uf2", "https://example.com/RAK_4631_repeater-v1.18.0-81dbae5.uf2", 740000L),
                     FirmwareAsset("Station_G2_repeater-v1.18.0-81dbae5-merged.bin", "https://example.com/Station_G2_repeater-v1.18.0-81dbae5-merged.bin", 1850000L),
                     FirmwareAsset("Station_G3_repeater-v1.18.0-81dbae5-merged.bin", "https://example.com/Station_G3_repeater-v1.18.0-81dbae5-merged.bin", 1850000L),
@@ -312,6 +314,8 @@ class ExampleRobolectricTest {
                 assets = listOf(
                     FirmwareAsset("Heltec_v3_companion_radio_ble-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v3_companion_radio_ble-v1.18.0-81dbae5-merged.bin", 1950000L),
                     FirmwareAsset("Heltec_v3_companion_radio_usb-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v3_companion_radio_usb-v1.18.0-81dbae5-merged.bin", 1920000L),
+                    FirmwareAsset("Heltec_v4_companion_radio_ble-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v4_companion_radio_ble-v1.18.0-81dbae5-merged.bin", 1950000L),
+                    FirmwareAsset("Heltec_v4_companion_radio_usb-v1.18.0-81dbae5-merged.bin", "https://example.com/Heltec_v4_companion_radio_usb-v1.18.0-81dbae5-merged.bin", 1920000L),
                     FirmwareAsset("RAK_4631_companion_radio_ble-v1.18.0-81dbae5.uf2", "https://example.com/RAK_4631_companion_radio_ble-v1.18.0-81dbae5.uf2", 780000L),
                     FirmwareAsset("RAK_4631_companion_radio_usb-v1.18.0-81dbae5.uf2", "https://example.com/RAK_4631_companion_radio_usb-v1.18.0-81dbae5.uf2", 770000L),
                     FirmwareAsset("Station_G2_companion_radio_ble-v1.18.0-81dbae5-merged.bin", "https://example.com/Station_G2_companion_radio_ble-v1.18.0-81dbae5-merged.bin", 1950000L),
@@ -329,6 +333,7 @@ class ExampleRobolectricTest {
         assertEquals("v1.18.0", unifiedRelease.tagName)
 
         val heltecV3 = BoardCatalog.allBoards.first { it.id == "heltec_v3" }
+        val heltecV4 = BoardCatalog.allBoards.first { it.id == "heltec_v4" }
         val rak4631 = BoardCatalog.allBoards.first { it.id == "rak4631" }
         val tEcho = BoardCatalog.allBoards.first { it.id == "lilygo_techo" }
 
@@ -349,6 +354,31 @@ class ExampleRobolectricTest {
             "Heltec_v3_room_server-v1.18.0-81dbae5-merged.bin",
             repo.selectCandidateAssets(unifiedRelease, heltecV3, MeshCoreRole.ROOM_SERVER).first().fileName
         )
+
+        // Heltec V4: test all 4 MeshCore roles + Meshtastic expected filename
+        assertEquals(
+            "Heltec_v4_companion_radio_ble-v1.18.0-81dbae5-merged.bin",
+            repo.selectCandidateAssets(unifiedRelease, heltecV4, MeshCoreRole.COMPANION_BLE).first().fileName
+        )
+        assertEquals(
+            "Heltec_v4_companion_radio_usb-v1.18.0-81dbae5-merged.bin",
+            repo.selectCandidateAssets(unifiedRelease, heltecV4, MeshCoreRole.COMPANION_USB).first().fileName
+        )
+        assertEquals(
+            "Heltec_v4_repeater-v1.18.0-81dbae5-merged.bin",
+            repo.selectCandidateAssets(unifiedRelease, heltecV4, MeshCoreRole.REPEATER).first().fileName
+        )
+        assertEquals(
+            "Heltec_v4_room_server-v1.18.0-81dbae5-merged.bin",
+            repo.selectCandidateAssets(unifiedRelease, heltecV4, MeshCoreRole.ROOM_SERVER).first().fileName
+        )
+        val v4MtName = repo.resolveExpectedFileName(
+            board = heltecV4,
+            release = mtRelease,
+            meshCoreRole = MeshCoreRole.COMPANION_BLE,
+            fullErase = true
+        )
+        assertTrue(v4MtName.contains("firmware-heltec-v4-") && v4MtName.endsWith(".factory.bin"))
 
         // RAK4631: test all 4 roles
         assertEquals(

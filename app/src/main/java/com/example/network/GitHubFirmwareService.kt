@@ -1431,6 +1431,19 @@ class GitHubFirmwareRepository {
                 !lowerFileName.contains("wireless_tracker") &&
                 !lowerFileName.contains("mesh-node") &&
                 !lowerFileName.contains("t114")
+            "heltec_v4" -> !lowerFileName.contains("heltec_v2") &&
+                !lowerFileName.contains("heltec-v2") &&
+                !lowerFileName.contains("heltec_v3") &&
+                !lowerFileName.contains("heltec-v3") &&
+                !lowerFileName.contains("wsl") &&
+                !lowerFileName.contains("wireless-paper") &&
+                !lowerFileName.contains("wireless_paper") &&
+                !lowerFileName.contains("wireless-tracker") &&
+                !lowerFileName.contains("wireless_tracker") &&
+                !lowerFileName.contains("mesh-node") &&
+                !lowerFileName.contains("t114") &&
+                !lowerFileName.contains("inkhud") &&
+                !lowerFileName.contains("tft")
             "rak4631" -> !lowerFileName.contains("rak4631_eink") &&
                 !lowerFileName.contains("rak4631-eink") &&
                 !lowerFileName.contains("rak4631_eth_gw") &&
@@ -1505,6 +1518,7 @@ class GitHubFirmwareRepository {
         when (board.id) {
             "station_g2" -> tokens.addAll(listOf("station-g2", "station_g2", "stationg2"))
             "heltec_v3" -> tokens.addAll(listOf("heltec-v3", "heltec_v3", "heltec_wifi_lora_32_v3"))
+            "heltec_v4" -> tokens.addAll(listOf("heltec-v4", "heltec_v4", "heltec_wifi_lora_32_v4"))
             "rak4631" -> tokens.addAll(listOf("rak_4631", "rak4631"))
             "lilygo_tbeam_s3" -> tokens.addAll(
                 listOf("t_beam_s3_supreme", "tbeam-s3-core", "tbeam_supreme", "t-beam-supreme", "tbeams3")
