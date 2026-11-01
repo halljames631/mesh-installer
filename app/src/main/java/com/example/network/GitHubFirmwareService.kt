@@ -1665,11 +1665,35 @@ class GitHubFirmwareRepository {
         val totalZipSize = zipIndex.totalZipSize
         val resolvedCdnUrl = zipIndex.resolvedCdnUrl
 
+        // If the remote ZIP is already a single-board Nordic/Adafruit DFU package (contains .dat + .bin),
+        // download the entire DFU .zip so BleTransportManager / UsbTransportManager gets both the official .dat and .bin!
+        val isSingleBoardDfuZip = board.mcu == McuArchitecture.NRF52840 &&
+            entries.size <= 6 &&
+            entries.any { it.fileName.endsWith(".dat", ignoreCase = true) } &&
+            entries.any { it.fileName.endsWith(".bin", ignoreCase = true) }
+        if (isSingleBoardDfuZip && totalZipSize <= 2_500_000L) {
+            onProgress(0.55f, "Downloading ${board.name} DFU package (${totalZipSize / 1024} KB)...")
+            val fullZipReq = Request.Builder().url(resolvedCdnUrl).build()
+            val fullZipBytes = okHttpClient.newCall(fullZipReq).execute().use { resp ->
+                if (!resp.isSuccessful) null else resp.body?.bytes()
+            }
+            if (fullZipBytes != null && fullZipBytes.size > 1024) {
+                return inspectAndWrapBinary(
+                    bytes = fullZipBytes,
+                    fileName = "${board.meshtasticTarget}-ota.zip",
+                    board = board,
+                    isRealBinary = true
+                )
+            }
+        }
+
         val desiredExt = if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) ".uf2" else ".bin"
 
         val allBoardEntries = entries.filter { e ->
             val lower = e.fileName.lowercase(Locale.US)
-            lower.endsWith(desiredExt) &&
+            val validExt = lower.endsWith(desiredExt) ||
+                (board.mcu == McuArchitecture.NRF52840 && (lower.endsWith("-ota.zip") || lower.endsWith(".zip") || lower.endsWith(".bin")))
+            validExt &&
                 !lower.contains("littlefs") &&
                 !lower.contains("bleota") &&
                 !lower.startsWith("mt-") &&
@@ -1689,9 +1713,20 @@ class GitHubFirmwareRepository {
             allBoardEntries
         }
 
+        // On nRF52840 (SenseCAP T1000-E, RAK4631, LilyGO T-Echo), prefer the official -ota.zip DFU package
+        // (which contains both the official .dat Init Packet and raw .bin) when present inside the release archive!
+        val nrfOtaZipEntry = if (board.mcu == McuArchitecture.NRF52840) {
+            matchingEntries.firstOrNull {
+                val lower = it.fileName.lowercase(Locale.US)
+                lower.endsWith("-ota.zip") || lower.endsWith("_ota.zip") || lower.endsWith(".zip")
+            }
+        } else {
+            null
+        }
+
         // Select between .factory.bin (0x0000 full factory image) and .bin / -update.bin (0x10000 app update image)
         val hasModernFactoryNaming = matchingEntries.any { isFactoryBinaryName(it.fileName.lowercase(Locale.US)) }
-        val chosenEntry = if (hasModernFactoryNaming) {
+        val chosenEntry = nrfOtaZipEntry ?: if (hasModernFactoryNaming) {
             if (preferFactoryImage) {
                 matchingEntries.firstOrNull { isFactoryBinaryName(it.fileName.lowercase(Locale.US)) }
                     ?: matchingEntries.firstOrNull()
@@ -1708,9 +1743,12 @@ class GitHubFirmwareRepository {
                     ?: matchingEntries.firstOrNull()
             }
         } ?: entries.firstOrNull {
-            // Single-board nRF52 DFU .zip archive (contains 1 .bin + manifest.json)
+            // Single-board nRF52 DFU .zip archive (contains 1 .bin/.uf2 + manifest.json)
             val lower = it.fileName.lowercase(Locale.US)
-            lower.endsWith(desiredExt) && !lower.contains("bleota") && !lower.contains("littlefs") && entries.size <= 4
+            (lower.endsWith(desiredExt) || lower.endsWith(".bin")) &&
+                !lower.contains("bleota") &&
+                !lower.contains("littlefs") &&
+                entries.size <= 6
         } ?: return null
 
         // Step 5: Download ONLY the compressed bytes for chosenEntry via HTTP Range!
@@ -1790,6 +1828,8 @@ class GitHubFirmwareRepository {
 
         val matchedEntries = mutableListOf<Pair<String, ByteArray>>()
         val nonTargetCandidates = mutableListOf<Pair<String, ByteArray>>()
+        var datEntry: Pair<String, ByteArray>? = null
+        var binEntry: Pair<String, ByteArray>? = null
         var totalEntriesSeen = 0
 
         val zis = ZipInputStream(inputStream)
@@ -1801,11 +1841,19 @@ class GitHubFirmwareRepository {
                     val entryName = entry.name.substringAfterLast('/')
                     val lower = entryName.lowercase(Locale.US)
 
-                    if (lower.endsWith(desiredExt) &&
+                    if (lower.endsWith(".dat") && datEntry == null) {
+                        datEntry = Pair(entryName, readCurrentZipEntryBytes(zis))
+                    } else if (
+                        (lower.endsWith(desiredExt) ||
+                            (board.mcu == McuArchitecture.NRF52840 && (lower.endsWith("-ota.zip") || lower.endsWith(".bin")))) &&
                         !lower.contains("littlefs") &&
                         !lower.contains("bleota") &&
                         !lower.startsWith("mt-")
                     ) {
+                        val bytes = readCurrentZipEntryBytes(zis)
+                        if (lower.endsWith(".bin") && binEntry == null) {
+                            binEntry = Pair(entryName, bytes)
+                        }
                         val matchesBoard = matchesBoardStrictly(board, lower)
                         val matchesTDeckUiMode = if (board.id == "lilygo_tdeck" && ecosystem == FirmwareEcosystem.MESHTASTIC) {
                             val isTft = lower.contains("t-deck-tft") || lower.contains("tft") || lower.contains("mui")
@@ -1816,13 +1864,13 @@ class GitHubFirmwareRepository {
                         }
                         if (matchesBoard && matchesTDeckUiMode) {
                             onProgress(0.70f, "Extracting board image from archive: $entryName")
-                            val bytes = readCurrentZipEntryBytes(zis)
                             matchedEntries.add(Pair(entryName, bytes))
+                            if (board.mcu == McuArchitecture.NRF52840 && lower.endsWith("-ota.zip")) break
                             if (preferFactoryImage && isFactoryBinaryName(lower)) break
                             if (!preferFactoryImage && isExplicitUpdateBinaryName(lower)) break
-                        } else if (totalEntriesSeen <= 4 && nonTargetCandidates.isEmpty()) {
-                            // Single-board DFU zip fallback only if archive has <= 4 files total
-                            nonTargetCandidates.add(Pair(entryName, readCurrentZipEntryBytes(zis)))
+                        } else if (totalEntriesSeen <= 6 && nonTargetCandidates.isEmpty()) {
+                            // Single-board DFU zip fallback only if archive has <= 6 files total
+                            nonTargetCandidates.add(Pair(entryName, bytes))
                         }
                     }
                 }
@@ -1837,8 +1885,32 @@ class GitHubFirmwareRepository {
             }
         }
 
+        // If this was a single-board Nordic/Adafruit DFU .zip with both .dat and .bin, repackage them into a clean DFU .zip
+        if (board.mcu == McuArchitecture.NRF52840 && datEntry != null && binEntry != null && totalEntriesSeen <= 6) {
+            val bos = ByteArrayOutputStream()
+            java.util.zip.ZipOutputStream(bos).use { zos ->
+                zos.putNextEntry(java.util.zip.ZipEntry(datEntry!!.first))
+                zos.write(datEntry!!.second)
+                zos.closeEntry()
+                zos.putNextEntry(java.util.zip.ZipEntry(binEntry!!.first))
+                zos.write(binEntry!!.second)
+                zos.closeEntry()
+            }
+            return inspectAndWrapBinary(
+                bytes = bos.toByteArray(),
+                fileName = binEntry!!.first.removeSuffix(".bin") + "-ota.zip",
+                board = board,
+                isRealBinary = true
+            )
+        }
+
+        val nrfOtaMatch = if (board.mcu == McuArchitecture.NRF52840) {
+            matchedEntries.firstOrNull { it.first.lowercase(Locale.US).endsWith("-ota.zip") }
+        } else {
+            null
+        }
         val hasModernFactory = matchedEntries.any { isFactoryBinaryName(it.first.lowercase(Locale.US)) }
-        val chosenPair: Pair<String, ByteArray>? = if (matchedEntries.isNotEmpty()) {
+        val chosenPair: Pair<String, ByteArray>? = nrfOtaMatch ?: if (matchedEntries.isNotEmpty()) {
             if (hasModernFactory) {
                 if (preferFactoryImage) {
                     matchedEntries.firstOrNull { isFactoryBinaryName(it.first.lowercase(Locale.US)) }
@@ -1856,7 +1928,7 @@ class GitHubFirmwareRepository {
                         ?: matchedEntries.first()
                 }
             }
-        } else if (totalEntriesSeen <= 4 && nonTargetCandidates.isNotEmpty()) {
+        } else if (totalEntriesSeen <= 6 && nonTargetCandidates.isNotEmpty()) {
             nonTargetCandidates.first()
         } else {
             null

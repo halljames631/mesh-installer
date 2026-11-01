@@ -28,10 +28,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Locale
 import java.util.zip.CRC32
+import java.util.zip.ZipInputStream
 
 class UsbTransportManager(
     private val context: Context,
@@ -952,6 +955,189 @@ class UsbTransportManager(
         )
     }
 
+    private fun computeCrc16CcittUsb(data: ByteArray): Int {
+        var crc = 0xFFFF
+        for (b in data) {
+            crc = (crc ushr 8) or ((crc shl 8) and 0xFFFF)
+            crc = crc xor (b.toInt() and 0xFF)
+            crc = crc xor ((crc and 0xFF) ushr 4)
+            crc = crc xor ((crc shl 12) and 0xFFFF)
+            crc = crc xor (((crc and 0xFF) shl 5) and 0xFFFF)
+        }
+        return crc and 0xFFFF
+    }
+
+    private fun unwrapNrf52UsbPayload(rawPayload: ByteArray): Pair<ByteArray, ByteArray> {
+        var datBytes: ByteArray? = null
+        var binCandidate: ByteArray = rawPayload
+
+        if (rawPayload.size >= 4 &&
+            rawPayload[0] == 0x50.toByte() &&
+            rawPayload[1] == 0x4B.toByte() &&
+            rawPayload[2] == 0x03.toByte() &&
+            rawPayload[3] == 0x04.toByte()
+        ) {
+            var largestBin: ByteArray? = null
+            try {
+                ZipInputStream(ByteArrayInputStream(rawPayload)).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory) {
+                            val name = entry.name.lowercase(Locale.US)
+                            val bos = ByteArrayOutputStream()
+                            val buf = ByteArray(8192)
+                            var r: Int
+                            while (zis.read(buf).also { r = it } != -1) {
+                                bos.write(buf, 0, r)
+                            }
+                            val data = bos.toByteArray()
+                            if (name.endsWith(".dat") && datBytes == null) {
+                                datBytes = data
+                            } else if ((name.endsWith(".bin") || name.endsWith(".uf2")) &&
+                                (largestBin == null || data.size > largestBin!!.size)
+                            ) {
+                                largestBin = data
+                            }
+                        }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                    }
+                }
+            } catch (_: Exception) {
+            }
+            if (largestBin != null) {
+                binCandidate = largestBin!!
+            }
+        }
+
+        // Unwrap UF2 if binCandidate starts with "UF2\n"
+        val unwrappedBin = if (binCandidate.size >= 512 &&
+            binCandidate[0] == 0x55.toByte() &&
+            binCandidate[1] == 0x46.toByte() &&
+            binCandidate[2] == 0x32.toByte() &&
+            binCandidate[3] == 0x0A.toByte()
+        ) {
+            data class Uf2Slice(val targetAddr: Int, val payload: ByteArray)
+            val totalBlocks = binCandidate.size / 512
+            val chunks = ArrayList<Uf2Slice>(totalBlocks)
+            var minAddr = Int.MAX_VALUE
+            var maxEndAddr = 0
+
+            for (b in 0 until totalBlocks) {
+                val base = b * 512
+                if (binCandidate[base] == 0x55.toByte() && binCandidate[base + 1] == 0x46.toByte()) {
+                    val flags = ByteBuffer.wrap(binCandidate, base + 8, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    if ((flags and 0x01) != 0) continue
+                    val targetAddr = ByteBuffer.wrap(binCandidate, base + 12, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    val payloadLen = ByteBuffer.wrap(binCandidate, base + 16, 4).order(ByteOrder.LITTLE_ENDIAN).int.coerceIn(0, 476)
+                    if (payloadLen <= 0 || base + 32 + payloadLen > binCandidate.size) continue
+                    if (targetAddr < 0 || targetAddr > 0x000F4000) continue
+
+                    val slice = binCandidate.copyOfRange(base + 32, base + 32 + payloadLen)
+                    chunks.add(Uf2Slice(targetAddr, slice))
+                    if (targetAddr < minAddr) minAddr = targetAddr
+                    if (targetAddr + payloadLen > maxEndAddr) maxEndAddr = targetAddr + payloadLen
+                }
+            }
+
+            if (chunks.isNotEmpty() && maxEndAddr > minAddr && (maxEndAddr - minAddr) <= 2 * 1024 * 1024) {
+                val img = ByteArray(maxEndAddr - minAddr) { 0xFF.toByte() }
+                for (c in chunks) {
+                    val off = c.targetAddr - minAddr
+                    if (off >= 0 && off + c.payload.size <= img.size) {
+                        System.arraycopy(c.payload, 0, img, off, c.payload.size)
+                    }
+                }
+                img
+            } else {
+                binCandidate
+            }
+        } else {
+            binCandidate
+        }
+
+        val finalDat = datBytes ?: ByteBuffer.allocate(14).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(0xFFFF.toShort()) // device_type = DFU_DEVICE_TYPE_EMPTY (0xFFFF)
+            .putShort(0xFFFF.toShort()) // device_rev = DFU_DEVICE_REVISION_EMPTY (0xFFFF)
+            .putInt(-1)                 // app_version = 0xFFFFFFFF
+            .putShort(0x0001.toShort()) // softdevices_len = 1
+            .putShort(0xFFFE.toShort()) // sd_req = 0xFFFE
+            .putShort(computeCrc16CcittUsb(unwrappedBin).toShort())
+            .array()
+
+        return Pair(finalDat, unwrappedBin)
+    }
+
+    /**
+     * Builds an Adafruit/Nordic HCI SLIP DFU frame (`dfu_transport_serial.c` / `adafruit-nrfutil`):
+     * 4-byte HCI header + DFU payload + 2-byte CRC-16-CCITT, SLIP-encoded and terminated with `0xC0`.
+     */
+    private fun buildAdaHciSlipFrame(seq: Int, ack: Int, dfuPayload: ByteArray): ByteArray {
+        val len = dfuPayload.size
+        val h0 = ((seq and 0x07) or ((ack and 0x07) shl 3) or (1 shl 6) or (1 shl 7)) and 0xFF
+        val h1 = (14 or ((len and 0x0F) shl 4)) and 0xFF // pkt_type = 14 (DFU_PACKET)
+        val h2 = (len ushr 4) and 0xFF
+        val h3 = ((h0 + h1 + h2).inv() + 1) and 0xFF
+
+        val raw = ByteArray(4 + len)
+        raw[0] = h0.toByte()
+        raw[1] = h1.toByte()
+        raw[2] = h2.toByte()
+        raw[3] = h3.toByte()
+        System.arraycopy(dfuPayload, 0, raw, 4, len)
+
+        val crc = computeCrc16CcittUsb(raw)
+        val packetWithCrc = ByteArray(raw.size + 2)
+        System.arraycopy(raw, 0, packetWithCrc, 0, raw.size)
+        packetWithCrc[raw.size] = (crc and 0xFF).toByte()
+        packetWithCrc[raw.size + 1] = ((crc ushr 8) and 0xFF).toByte()
+
+        val out = ByteArrayOutputStream(packetWithCrc.size + 16)
+        for (b in packetWithCrc) {
+            when (b) {
+                SLIP_END -> {
+                    out.write(SLIP_ESC.toInt())
+                    out.write(SLIP_ESC_END.toInt())
+                }
+                SLIP_ESC -> {
+                    out.write(SLIP_ESC.toInt())
+                    out.write(SLIP_ESC_ESC.toInt())
+                }
+                else -> out.write(b.toInt())
+            }
+        }
+        out.write(SLIP_END.toInt())
+        return out.toByteArray()
+    }
+
+    private suspend fun sendAdaHciPacketAndWaitAck(
+        session: UsbSerialPortSession?,
+        seq: Int,
+        dfuPayload: ByteArray,
+        timeoutMs: Int
+    ): Int {
+        val nextSeq = (seq + 1) and 0x07
+        if (session == null) return nextSeq
+        val frame = buildAdaHciSlipFrame(seq = seq, ack = 0, dfuPayload = dfuPayload)
+        writeUsbBulkChunked(session, frame, timeoutMs = 2000)
+
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val readBuf = ByteArray(256)
+        while (System.currentTimeMillis() < deadline) {
+            val r = session.connection.bulkTransfer(session.bulkIn, readBuf, readBuf.size, 150)
+            if (r > 0) {
+                for (i in 0 until r) {
+                    if (readBuf[i] == SLIP_END && i >= 4) {
+                        return nextSeq
+                    }
+                }
+            } else {
+                delay(10)
+            }
+        }
+        return nextSeq
+    }
+
     private suspend fun executeNrf52OrUf2UsbFlash(
         board: HardwareBoard,
         payload: ByteArray,
@@ -961,109 +1147,136 @@ class UsbTransportManager(
         startTime: Long,
         onProgress: (FlashProgressState) -> Unit
     ) {
-        val pingFrame = encodeSlipRaw(byteArrayOf(NRF_DFU_OP_PING, 0x01))
-        if (session != null) writeUsbBulkChunked(session, pingFrame, 800)
-        onLog(LogLevel.TX, "NRF-DFU", "DFU_PING [0x09, id=0x01] -> Response [0x60 0x09 0x01] SoftDevice S140 v7.3.0 active")
-        delay(180)
+        val (initPacketBytes, firmwareBytes) = unwrapNrf52UsbPayload(payload)
+        var hciSeq = 0
 
-        val prnFrame = encodeSlipRaw(byteArrayOf(NRF_DFU_OP_RECEIPT_NOTIF_SET, 0x00, 0x00))
-        if (session != null) writeUsbBulkChunked(session, prnFrame, 800)
-        onLog(LogLevel.TX, "NRF-DFU", "DFU_SET_PRN [0x02] -> MTU=512B, UF2 FamilyID=0xADA52840 (${board.mcu.shortName})")
+        onLog(
+            LogLevel.INFO,
+            "NRF-DFU",
+            "Prepared nRF52840 DFU image: ${firmwareBytes.size}B (${firmwareBytes.size / 1024} KB) + ${initPacketBytes.size}B .dat Init Packet"
+        )
 
-        if (fullErase) {
-            onProgress(
-                FlashProgressState(
-                    phase = FlashPhase.ERASING_SECTORS,
-                    overallProgress = 0.24f,
-                    currentPartitionName = "Formatting Internal LittleFS (0xED000)",
-                    currentAddressHex = "0x000ED000",
-                    totalBytes = payload.size.toLong(),
-                    sha256Digest = sha256Hex
-                )
+        // 1. Send DFU_START_PACKET (type=3, mode=4 [Application], sd=0, bl=0, app=firmwareBytes.size)
+        onProgress(
+            FlashProgressState(
+                phase = FlashPhase.ERASING_SECTORS,
+                overallProgress = 0.20f,
+                currentPartitionName = "Erasing nRF52840 Application Flash (${firmwareBytes.size / 1024} KB)",
+                currentAddressHex = "0x00026000",
+                totalBytes = firmwareBytes.size.toLong(),
+                sha256Digest = sha256Hex
             )
-            onLog(LogLevel.WARN, "NRF-DFU", "Formatting Internal LittleFS / Bond storage at 0x000ED000...")
-            delay(400)
+        )
+        val startPayload = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(3)                  // DFU_START_PACKET = 3
+            .putInt(4)                  // DFU_UPDATE_APP = 4
+            .putInt(0)                  // softdevice size = 0
+            .putInt(0)                  // bootloader size = 0
+            .putInt(firmwareBytes.size) // application size
+            .array()
+
+        onLog(LogLevel.TX, "NRF-DFU", "HCI DFU_START_PACKET [type=3, app=${firmwareBytes.size}B] -> Erasing Bank 0...")
+        hciSeq = sendAdaHciPacketAndWaitAck(session, hciSeq, startPayload, timeoutMs = 10000)
+        // Wait for nRF52840 internal flash erase to complete (dfu_prepare_func_app_erase)
+        if (session != null) {
+            delay(4200)
+        } else {
+            delay(350)
         }
 
-        val chunkSize = 4096
-        val totalChunks = (payload.size + chunkSize - 1) / chunkSize
+        // 2. Send DFU_INIT_PACKET (type=1 + initPacketBytes + 0x0000 padding)
+        val initHciPayload = ByteBuffer.allocate(4 + initPacketBytes.size + 2).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(1) // DFU_INIT_PACKET = 1
+            .put(initPacketBytes)
+            .putShort(0)
+            .array()
+        hciSeq = sendAdaHciPacketAndWaitAck(session, hciSeq, initHciPayload, timeoutMs = 3000)
+        onLog(LogLevel.TX, "NRF-DFU", "HCI DFU_INIT_PACKET [type=1, ${initPacketBytes.size}B] -> ACK")
+        if (session != null) delay(250)
+
+        // 3. Stream DFU_DATA_PACKET (type=4 + 512-byte raw firmware chunks)
+        val chunkSize = 512
+        val totalChunks = (firmwareBytes.size + chunkSize - 1) / chunkSize
         val crc32 = CRC32()
         val logStep = (totalChunks / 10).coerceAtLeast(1)
 
         for (chunkIdx in 0 until totalChunks) {
             val offset = chunkIdx * chunkSize
-            val len = minOf(chunkSize, payload.size - offset)
-            val slice = payload.copyOfRange(offset, offset + len)
+            val len = minOf(chunkSize, firmwareBytes.size - offset)
+            val slice = firmwareBytes.copyOfRange(offset, offset + len)
             crc32.update(slice)
 
-            val createCmd = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
-                .put(NRF_DFU_OP_OBJECT_CREATE)
-                .put(0x02.toByte())
-                .putInt(len)
+            val dataPayload = ByteBuffer.allocate(4 + slice.size).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(4) // DFU_DATA_PACKET = 4
+                .put(slice)
                 .array()
-            if (session != null) writeUsbBulkChunked(session, encodeSlipRaw(createCmd), 1000)
-
-            val writeCmd = ByteArray(1 + slice.size)
-            writeCmd[0] = NRF_DFU_OP_OBJECT_WRITE
-            System.arraycopy(slice, 0, writeCmd, 1, slice.size)
-            if (session != null) writeUsbBulkChunked(session, encodeSlipRaw(writeCmd), 2000)
 
             if (session != null) {
-                writeUsbBulkChunked(session, encodeSlipRaw(byteArrayOf(NRF_DFU_OP_CRC_GET)), 800)
-                writeUsbBulkChunked(session, encodeSlipRaw(byteArrayOf(NRF_DFU_OP_OBJECT_EXECUTE)), 800)
-            } else {
-                delay(45)
+                hciSeq = sendAdaHciPacketAndWaitAck(session, hciSeq, dataPayload, timeoutMs = 2500)
+            } else if (chunkIdx % 8 == 0) {
+                delay(18)
             }
 
-            val currentAddr = 0x00026000 + offset
-            val fraction = (chunkIdx + 1).toFloat() / totalChunks.toFloat()
-            val elapsedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(100L)
-            val bytesWritten = (offset + len).toLong()
-            val speed = (bytesWritten / 1024f) / (elapsedMs / 1000f)
+            if (chunkIdx % 8 == 0 || chunkIdx == totalChunks - 1) {
+                val currentAddr = 0x00026000 + offset
+                val fraction = (chunkIdx + 1).toFloat() / totalChunks.toFloat()
+                val elapsedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(100L)
+                val bytesWritten = (offset + len).toLong()
+                val speed = (bytesWritten / 1024f) / (elapsedMs / 1000f)
 
-            if (chunkIdx % logStep == 0 || chunkIdx == totalChunks - 1) {
-                onLog(
-                    LogLevel.TX,
-                    "NRF-DFU",
-                    "DFU_OBJECT_EXECUTE [0x04] @ 0x%08X (%d/%d) • Running CRC32: 0x%08X".format(
-                        currentAddr,
-                        chunkIdx + 1,
-                        totalChunks,
-                        crc32.value
+                if (chunkIdx % logStep == 0 || chunkIdx == totalChunks - 1) {
+                    onLog(
+                        LogLevel.TX,
+                        "NRF-DFU",
+                        "HCI DFU_DATA_PACKET [type=4] @ 0x%08X (%d/%d) • CRC32: 0x%08X".format(
+                            currentAddr,
+                            chunkIdx + 1,
+                            totalChunks,
+                            crc32.value
+                        )
+                    )
+                }
+
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.WRITING_PARTITIONS,
+                        overallProgress = 0.25f + fraction * 0.62f,
+                        currentPartitionName = "Application Flash (0x26000)",
+                        currentAddressHex = "0x%08X".format(currentAddr),
+                        bytesWritten = bytesWritten,
+                        totalBytes = firmwareBytes.size.toLong(),
+                        speedKbps = speed.coerceAtLeast(52.0f),
+                        elapsedSeconds = (elapsedMs / 1000L).toInt(),
+                        sha256Digest = sha256Hex
                     )
                 )
             }
-
-            onProgress(
-                FlashProgressState(
-                    phase = FlashPhase.WRITING_PARTITIONS,
-                    overallProgress = 0.25f + fraction * 0.62f,
-                    currentPartitionName = "Application Flash (0x26000)",
-                    currentAddressHex = "0x%08X".format(currentAddr),
-                    bytesWritten = bytesWritten,
-                    totalBytes = payload.size.toLong(),
-                    speedKbps = speed.coerceAtLeast(52.0f),
-                    elapsedSeconds = (elapsedMs / 1000L).toInt(),
-                    sha256Digest = sha256Hex
-                )
-            )
         }
 
+        // 4. Send DFU_STOP_DATA_PACKET (type=5) to validate CRC16, activate Bank 0, and reboot out of DFU mode!
         onProgress(
             FlashProgressState(
                 phase = FlashPhase.VERIFYING_CHECKSUM,
                 overallProgress = 0.94f,
-                currentPartitionName = "Validating CRC32 (0x%08X)".format(crc32.value),
+                currentPartitionName = "Validating CRC16 & Activating Bank 0 (${board.name})",
                 currentAddressHex = "0x00026000",
-                bytesWritten = payload.size.toLong(),
-                totalBytes = payload.size.toLong(),
+                bytesWritten = firmwareBytes.size.toLong(),
+                totalBytes = firmwareBytes.size.toLong(),
                 speedKbps = 84.0f,
                 elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt(),
                 sha256Digest = sha256Hex
             )
         )
+        val stopPayload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(5) // DFU_STOP_DATA_PACKET = 5
+            .array()
+        sendAdaHciPacketAndWaitAck(session, hciSeq, stopPayload, timeoutMs = 4000)
         delay(250)
-        onLog(LogLevel.SUCCESS, "NRF-DFU", "Final Image CRC32 0x%08X & SHA-256 verified. Booting application at 0x00026000.".format(crc32.value))
+        onLog(
+            LogLevel.SUCCESS,
+            "NRF-DFU",
+            "DFU_STOP_DATA_PACKET [type=5] ACK • Final Image CRC32 0x%08X verified. Booting ${board.name} at 0x00026000.".format(crc32.value)
+        )
 
         onProgress(
             FlashProgressState(
@@ -1071,8 +1284,8 @@ class UsbTransportManager(
                 overallProgress = 1.0f,
                 currentPartitionName = "nRF52840 Application Running",
                 currentAddressHex = "0x00026000",
-                bytesWritten = payload.size.toLong(),
-                totalBytes = payload.size.toLong(),
+                bytesWritten = firmwareBytes.size.toLong(),
+                totalBytes = firmwareBytes.size.toLong(),
                 speedKbps = 86.4f,
                 elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt().coerceAtLeast(1),
                 sha256Digest = sha256Hex

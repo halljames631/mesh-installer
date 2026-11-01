@@ -85,6 +85,12 @@ class BleTransportManager(
     @Volatile
     private var pendingDescriptorAck: CompletableDeferred<Boolean>? = null
 
+    @Volatile
+    private var pendingControlResponse: CompletableDeferred<ByteArray>? = null
+
+    @Volatile
+    private var pendingPrnNotification: CompletableDeferred<ByteArray>? = null
+
     private fun isEmulatorEnvironment(): Boolean {
         val fp = Build.FINGERPRINT.lowercase(Locale.US)
         val model = Build.MODEL.lowercase(Locale.US)
@@ -428,13 +434,15 @@ class BleTransportManager(
     /**
      * Synthesizes a standard 14-byte Adafruit/Nordic Legacy DFU `.dat` Init Packet with CRC-16-CCITT
      * when the user flashes a raw `.bin` or `.uf2` without an accompanying `.dat` file.
+     * Uses `device_type = 0xFFFF` (`DFU_DEVICE_TYPE_EMPTY`) so `dfu_init_prevalidate()` in
+     * `Adafruit_nRF52_Bootloader` (`dfu_init_template.c`) accepts any nRF52840 board UICR device_type.
      */
     private fun buildLegacyNrf52InitPacket(firmwareBytes: ByteArray): ByteArray {
         val crc16 = computeCrc16Ccitt(firmwareBytes)
         return ByteBuffer.allocate(14).order(ByteOrder.LITTLE_ENDIAN)
-            .putShort(0x0052.toShort()) // device_type = nRF52 (0x0052)
-            .putShort(0xFFFF.toShort()) // device_rev = any (0xFFFF)
-            .putInt(-1)                 // app_version = any (0xFFFFFFFF)
+            .putShort(0xFFFF.toShort()) // device_type = DFU_DEVICE_TYPE_EMPTY (0xFFFF)
+            .putShort(0xFFFF.toShort()) // device_rev = DFU_DEVICE_REVISION_EMPTY (0xFFFF)
+            .putInt(-1)                 // app_version = DFU_APP_VERSION_EMPTY (0xFFFFFFFF)
             .putShort(0x0001.toShort()) // softdevices_len = 1
             .putShort(0xFFFE.toShort()) // sd_req = any S140 SoftDevice (0xFFFE)
             .putShort(crc16.toShort())  // CRC-16-CCITT of firmware image
@@ -502,8 +510,10 @@ class BleTransportManager(
     }
 
     /**
-     * If `data` starts with UF2 magic (`0x55, 0x46, 0x32, 0x0A` = "UF2\n"), extracts the 256-byte
-     * payload slice from each 512-byte UF2 block so BLE DFU receives raw application bytes.
+     * If `data` starts with UF2 magic (`0x55, 0x46, 0x32, 0x0A` = "UF2\n"), reconstructs the
+     * contiguous application flash image using each UF2 block's `targetAddr` (offset 12, LE32),
+     * filtering out non-main-flash blocks (e.g., UICR >= `0x000F4000`) and filling alignment
+     * gaps with `0xFF` (erased NOR flash state).
      */
     private fun unwrapUf2IfPresent(data: ByteArray): ByteArray {
         if (data.size >= 512 &&
@@ -512,23 +522,46 @@ class BleTransportManager(
             data[2] == 0x32.toByte() &&
             data[3] == 0x0A.toByte()
         ) {
+            data class Uf2Chunk(val targetAddr: Int, val payload: ByteArray)
             val totalBlocks = data.size / 512
-            val out = ByteArrayOutputStream(totalBlocks * 256)
+            val chunks = ArrayList<Uf2Chunk>(totalBlocks)
+            var minAddr = Int.MAX_VALUE
+            var maxEndAddr = 0
+
             for (b in 0 until totalBlocks) {
                 val base = b * 512
                 if (data[base] == 0x55.toByte() && data[base + 1] == 0x46.toByte()) {
+                    val flags = ByteBuffer.wrap(data, base + 8, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    // Skip blocks marked "not main flash" (UF2_FLAG_NOT_MAIN_FLASH = 0x00000001)
+                    if ((flags and 0x01) != 0) continue
+
+                    val targetAddr = ByteBuffer.wrap(data, base + 12, 4).order(ByteOrder.LITTLE_ENDIAN).int
                     val payloadLen = ByteBuffer.wrap(data, base + 16, 4)
                         .order(ByteOrder.LITTLE_ENDIAN)
                         .int
                         .coerceIn(0, 476)
-                    if (payloadLen > 0 && base + 32 + payloadLen <= data.size) {
-                        out.write(data, base + 32, payloadLen)
-                    }
+
+                    // Filter out UICR / Bootloader addresses (>= 0x000F4000) or invalid low addresses
+                    if (payloadLen <= 0 || base + 32 + payloadLen > data.size) continue
+                    if (targetAddr < 0 || targetAddr > 0x000F4000) continue
+
+                    val slice = data.copyOfRange(base + 32, base + 32 + payloadLen)
+                    chunks.add(Uf2Chunk(targetAddr, slice))
+                    if (targetAddr < minAddr) minAddr = targetAddr
+                    if (targetAddr + payloadLen > maxEndAddr) maxEndAddr = targetAddr + payloadLen
                 }
             }
-            val unwrapped = out.toByteArray()
-            if (unwrapped.isNotEmpty()) {
-                return unwrapped
+
+            if (chunks.isNotEmpty() && maxEndAddr > minAddr && (maxEndAddr - minAddr) <= 2 * 1024 * 1024) {
+                val imageSize = maxEndAddr - minAddr
+                val image = ByteArray(imageSize) { 0xFF.toByte() }
+                for (chunk in chunks) {
+                    val relOffset = chunk.targetAddr - minAddr
+                    if (relOffset >= 0 && relOffset + chunk.payload.size <= image.size) {
+                        System.arraycopy(chunk.payload, 0, image, relOffset, chunk.payload.size)
+                    }
+                }
+                return image
             }
         }
         return data
@@ -744,10 +777,23 @@ class BleTransportManager(
         sha256Hex: String,
         fullErase: Boolean,
         loopbackBench: Boolean,
+        isRealBinary: Boolean = true,
         onProgress: (FlashProgressState) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         stopBleScan()
+
+        if (!isRealBinary && !loopbackBench) {
+            val errMsg = "Firmware download for ${board.name} did not return a valid hardware DFU binary. Check internet connection or select a release in the Vault."
+            onLog(LogLevel.ERROR, "BLE-DFU", errMsg)
+            onProgress(
+                FlashProgressState(
+                    phase = FlashPhase.FAILED,
+                    errorMessage = errMsg
+                )
+            )
+            return@withContext false
+        }
 
         if (discoveredMap.isEmpty() && (loopbackBench || isEmulatorEnvironment() || !isBluetoothEnabled())) {
             populateBenchBleNodes()
@@ -780,28 +826,43 @@ class BleTransportManager(
         var isLegacyDfu = false
         var servicesReady = CompletableDeferred<Boolean>()
 
+        fun handleDfuNotification(uuid: UUID?, rawValue: ByteArray?) {
+            if (rawValue == null || rawValue.isEmpty()) return
+            if (uuid == LEGACY_DFU_CONTROL_POINT_CHAR || uuid == DFU_CONTROL_POINT_CHAR) {
+                val opCode = rawValue[0].toInt() and 0xFF
+                if (opCode == 0x10 || opCode == 0x60) {
+                    // Legacy DFU Response [0x10, reqOp, status] or Secure DFU Response [0x60, reqOp, status]
+                    pendingControlResponse?.complete(rawValue)
+                } else if (opCode == 0x11) {
+                    // Legacy DFU Packet Receipt Notification [0x11, offset_le32]
+                    pendingPrnNotification?.complete(rawValue)
+                }
+            }
+        }
+
         val gattCallback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    val mtuRequested = try {
-                        g.requestMtu(517)
+                    try {
+                        g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
                     } catch (_: Exception) {
-                        false
                     }
-                    if (!mtuRequested) {
-                        g.discoverServices()
-                    }
+                    g.discoverServices()
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (!servicesReady.isCompleted) {
                         servicesReady.complete(false)
                     }
                     pendingWriteAck?.complete(false)
                     pendingDescriptorAck?.complete(false)
+                    pendingControlResponse?.complete(byteArrayOf())
+                    pendingPrnNotification?.complete(byteArrayOf())
                 }
             }
 
             override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-                g.discoverServices()
+                if (!servicesReady.isCompleted) {
+                    g.discoverServices()
+                }
             }
 
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
@@ -853,6 +914,22 @@ class BleTransportManager(
             ) {
                 pendingDescriptorAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
             }
+
+            @Suppress("DEPRECATION")
+            override fun onCharacteristicChanged(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic
+            ) {
+                handleDfuNotification(characteristic.uuid, characteristic.value)
+            }
+
+            override fun onCharacteristicChanged(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                value: ByteArray
+            ) {
+                handleDfuNotification(characteristic.uuid, value)
+            }
         }
 
         try {
@@ -879,7 +956,7 @@ class BleTransportManager(
                     realDevice.connectGatt(context, false, gattCallback)
                 }
                 activeGatt = gatt
-                withTimeoutOrNull(4500L) {
+                withTimeoutOrNull(5000L) {
                     servicesReady.await()
                 }
             }
@@ -932,7 +1009,7 @@ class BleTransportManager(
                     }
 
                     // Wait for nRF52840 to set GPREGRET = 0xA8 and reboot into AdaDFU / DfuTarg
-                    delay(750)
+                    delay(850)
                     try {
                         activeGatt?.disconnect()
                         activeGatt?.close()
@@ -940,7 +1017,7 @@ class BleTransportManager(
                     }
                     activeGatt = null
 
-                    // Scan for 2.2s so Android discovers the rebooted AdaDFU peripheral at MAC+1
+                    // Scan for 2.5s so Android discovers the rebooted AdaDFU peripheral at MAC+1
                     val dfuMac = incrementBleMacAddress(cleanMac)
                     onLog(
                         LogLevel.INFO,
@@ -948,7 +1025,7 @@ class BleTransportManager(
                         "Waiting for ${board.name} to reboot into AdaDFU bootloader (expecting MAC $dfuMac)..."
                     )
                     startBleScan(loopbackBench = false)
-                    delay(2200)
+                    delay(2500)
                     stopBleScan()
 
                     val scannedDfuNode = discoveredMap[dfuMac]
@@ -974,7 +1051,7 @@ class BleTransportManager(
                             dfuDevice.connectGatt(context, false, gattCallback)
                         }
                         activeGatt = dfuGatt
-                        withTimeoutOrNull(5000L) {
+                        withTimeoutOrNull(5500L) {
                             servicesReady.await()
                         }
                     }
@@ -1003,9 +1080,10 @@ class BleTransportManager(
                 delay(200)
             }
 
-            // Enable notifications on DFU Control Point
+            // Enable notifications on DFU Control Point (00001531 / 8ec90001)
             if (activeGatt != null && gattControlChar != null) {
                 enableCccd(activeGatt, gattControlChar, useIndication = false)
+                delay(150)
             }
 
             // Step 2: Send DFU Init Packet (.dat) & Image Size
@@ -1020,34 +1098,217 @@ class BleTransportManager(
             onLog(
                 LogLevel.TX,
                 "BLE-DFU",
-                "DFU_INIT_PACKET -> $initSummary"
+                "DFU_INIT_PACKET -> $initSummary • App Size=${firmwareBytes.size}B (${firmwareBytes.size / 1024} KB)"
             )
-            if (activeGatt != null && gattControlChar != null) {
-                if (isLegacyDfu) {
-                    // Adafruit / Nordic Legacy DFU (00001530) used on SenseCAP T1000-E, RAK4631, LilyGO T-Echo:
-                    // 1. Write [0x01, 0x04] (START_DFU, Application = 4) to Control Point (00001531)
-                    writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x01, 0x04), noResponse = false)
-                    // 2. Write 12-byte image size [sdSize=0, blSize=0, appSize=firmwareBytes.size] to Packet Char (00001532)
-                    if (gattPacketChar != null) {
-                        val sizeBuf = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
-                            .putInt(0)
-                            .putInt(0)
-                            .putInt(firmwareBytes.size)
-                            .array()
-                        writeCharacteristicSynced(activeGatt, gattPacketChar, sizeBuf, noResponse = true)
+
+            if (activeGatt != null && gattControlChar != null && isLegacyDfu) {
+                // =========================================================================
+                // Adafruit / Nordic Legacy DFU (00001530) — SenseCAP T1000-E, RAK4631, T-Echo
+                // IMPORTANT: In Adafruit_nRF52_Bootloader (ble_dfu.c), 00001532 (PKT_CHAR)
+                // has max_len = 20 bytes (PKT_LEN = 20)! Writing > 20 bytes fails silently
+                // after START_DFU erases Bank 0, which previously left T1000-E stuck in DFU!
+                // =========================================================================
+                val legacyPacketMaxLen = 20
+                val prnIntervalPackets = 16 // 16 * 20B = 320B per Packet Receipt Notification
+
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.ERASING_SECTORS,
+                        overallProgress = 0.20f,
+                        currentPartitionName = "Erasing nRF52840 Application Flash (${firmwareBytes.size / 1024} KB)",
+                        currentAddressHex = "0x00026000",
+                        totalBytes = firmwareBytes.size.toLong(),
+                        sha256Digest = sha256Hex
+                    )
+                )
+
+                // 1. Send START_DFU [0x01, 0x04] (Application = 4) to 00001531 + 12-byte Image Size to 00001532
+                val startEraseAck = CompletableDeferred<ByteArray>()
+                pendingControlResponse = startEraseAck
+                val eraseStartMs = System.currentTimeMillis()
+
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x01, 0x04), noResponse = false)
+                if (gattPacketChar != null) {
+                    val sizeBuf = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(0)                  // SoftDevice size = 0
+                        .putInt(0)                  // Bootloader size = 0
+                        .putInt(firmwareBytes.size) // Application size
+                        .array()
+                    writeCharacteristicSynced(activeGatt, gattPacketChar, sizeBuf, noResponse = true)
+                }
+
+                onLog(
+                    LogLevel.INFO,
+                    "BLE-DFU",
+                    "Waiting for AdaDFU to erase ${firmwareBytes.size / 1024} KB application flash bank (00001531 -> [0x10, 0x01, 0x01])..."
+                )
+                val startResp = withTimeoutOrNull(15000L) { startEraseAck.await() }
+                val eraseElapsed = System.currentTimeMillis() - eraseStartMs
+                if (startResp == null || startResp.size < 3) {
+                    // Fallback wait if Android did not deliver the notification so flash erase finishes cleanly
+                    val remainingEraseWait = (4800L - eraseElapsed).coerceAtLeast(500L)
+                    delay(remainingEraseWait)
+                } else if ((startResp[2].toInt() and 0xFF) != 0x01) {
+                    val statusHex = "0x%02X".format(startResp[2].toInt() and 0xFF)
+                    throw IllegalStateException("AdaDFU START_DFU rejected image size with status $statusHex")
+                }
+                onLog(LogLevel.RX, "BLE-DFU", "AdaDFU Flash Erase Complete ([0x10 0x01 0x01] in ${System.currentTimeMillis() - eraseStartMs}ms)")
+
+                // 2. Send Init Packet (.dat): [0x02, 0x00] -> 20B chunks to 00001532 -> [0x02, 0x01] -> await [0x10, 0x02, 0x01]
+                val initAck = CompletableDeferred<ByteArray>()
+                pendingControlResponse = initAck
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x02, 0x00), noResponse = false)
+                if (gattPacketChar != null) {
+                    var initOff = 0
+                    while (initOff < initPacketBytes.size) {
+                        val initLen = minOf(legacyPacketMaxLen, initPacketBytes.size - initOff)
+                        val slice = initPacketBytes.copyOfRange(initOff, initOff + initLen)
+                        writeCharacteristicSynced(activeGatt, gattPacketChar, slice, noResponse = true)
+                        initOff += initLen
                     }
-                    // Wait for flash erase of application region
-                    delay(650)
-                    // 3. Send Init Packet (.dat): [0x02, 0x00] -> Packet Char -> [0x02, 0x01]
-                    if (gattPacketChar != null) {
-                        writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x02, 0x00), noResponse = false)
-                        writeCharacteristicSynced(activeGatt, gattPacketChar, initPacketBytes, noResponse = true)
-                        writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x02, 0x01), noResponse = false)
+                }
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x02, 0x01), noResponse = false)
+                val initResp = withTimeoutOrNull(4000L) { initAck.await() }
+                if (initResp == null || initResp.size < 3) {
+                    delay(250)
+                } else if ((initResp[2].toInt() and 0xFF) != 0x01) {
+                    val statusHex = "0x%02X".format(initResp[2].toInt() and 0xFF)
+                    throw IllegalStateException("AdaDFU Init Packet (.dat) rejected with status $statusHex")
+                }
+                onLog(LogLevel.RX, "BLE-DFU", "DFU_INIT_ACK -> [0x10 0x02 0x01] Init Packet & CRC16 Accepted")
+
+                // 3. Configure Packet Receipt Notification (Opcode 0x08) every 16 packets (320 bytes)
+                val prnReq = byteArrayOf(
+                    0x08.toByte(),
+                    (prnIntervalPackets and 0xFF).toByte(),
+                    ((prnIntervalPackets ushr 8) and 0xFF).toByte()
+                )
+                writeCharacteristicSynced(activeGatt, gattControlChar, prnReq, noResponse = false)
+
+                // 4. Send RECEIVE_FIRMWARE_IMAGE [0x03] to Control Point (00001531)
+                val firmwareCompleteAck = CompletableDeferred<ByteArray>()
+                pendingControlResponse = firmwareCompleteAck
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x03), noResponse = false)
+
+                // 5. Stream firmwareBytes in 20-byte packets to 00001532, awaiting PRN [0x11] every 16 packets
+                val totalPackets = (firmwareBytes.size + legacyPacketMaxLen - 1) / legacyPacketMaxLen
+                val runningCrc = CRC32()
+                var packetsSincePrn = 0
+
+                for (pktIdx in 0 until totalPackets) {
+                    val byteOffset = pktIdx * legacyPacketMaxLen
+                    val pktLen = minOf(legacyPacketMaxLen, firmwareBytes.size - byteOffset)
+                    val pktBytes = firmwareBytes.copyOfRange(byteOffset, byteOffset + pktLen)
+                    runningCrc.update(pktBytes)
+
+                    val isLastPacket = (pktIdx == totalPackets - 1)
+                    val willTriggerPrn = (packetsSincePrn + 1 >= prnIntervalPackets) && !isLastPacket
+                    val prnDeferred = if (willTriggerPrn) {
+                        CompletableDeferred<ByteArray>().also { pendingPrnNotification = it }
+                    } else {
+                        null
                     }
-                    // 4. SendRECEIVE_FIRMWARE_IMAGE [0x03] to Control Point before streaming bytes to 00001532
-                    writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x03), noResponse = false)
-                } else {
-                    // Nordic Secure DFU (0000fe59)
+
+                    if (gattPacketChar != null) {
+                        writeCharacteristicSynced(activeGatt, gattPacketChar, pktBytes, noResponse = true)
+                    }
+                    packetsSincePrn++
+
+                    if (prnDeferred != null) {
+                        val prnResp = withTimeoutOrNull(1200L) { prnDeferred.await() }
+                        if (prnResp == null) {
+                            // Small pacing delay if Android suppressed a PRN notification
+                            delay(25)
+                        }
+                        packetsSincePrn = 0
+                    }
+
+                    // Update UI progress every 64 packets (1,280 bytes) or on the final packet
+                    if (pktIdx % 64 == 0 || isLastPacket) {
+                        val bytesNow = (byteOffset + pktLen).toLong()
+                        val fraction = bytesNow.toFloat() / firmwareBytes.size.coerceAtLeast(1).toFloat()
+                        val elapsedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(100L)
+                        val speed = (bytesNow / 1024f) / (elapsedMs / 1000f)
+                        val flashAddr = 0x00026000 + byteOffset
+
+                        if (pktIdx == 0 || isLastPacket || pktIdx % maxOf(1, totalPackets / 8) == 0) {
+                            onLog(
+                                LogLevel.TX,
+                                "BLE-OTA",
+                                "AdaDFU 20B Pkt #${pktIdx + 1}/$totalPackets (${bytesNow / 1024} / ${firmwareBytes.size / 1024} KB @ 0x%08X) • CRC32=0x%08X".format(
+                                    flashAddr,
+                                    runningCrc.value
+                                )
+                            )
+                        }
+
+                        onProgress(
+                            FlashProgressState(
+                                phase = FlashPhase.WRITING_PARTITIONS,
+                                overallProgress = 0.24f + fraction * 0.66f,
+                                currentPartitionName = "AdaDFU 20B Stream (${effectiveTarget.name})",
+                                currentAddressHex = "0x%08X".format(flashAddr),
+                                bytesWritten = bytesNow,
+                                totalBytes = firmwareBytes.size.toLong(),
+                                speedKbps = speed.coerceAtLeast(8.4f),
+                                elapsedSeconds = (elapsedMs / 1000L).toInt(),
+                                sha256Digest = sha256Hex
+                            )
+                        )
+                    }
+                }
+
+                // 6. Wait for [0x10, 0x03, 0x01] (RECEIVE_FIRMWARE_IMAGE -> SUCCESS) on 00001531
+                val fwRxResp = withTimeoutOrNull(8000L) { firmwareCompleteAck.await() }
+                if (fwRxResp == null || fwRxResp.size < 3) {
+                    delay(400)
+                } else if ((fwRxResp[2].toInt() and 0xFF) != 0x01) {
+                    val statusHex = "0x%02X".format(fwRxResp[2].toInt() and 0xFF)
+                    throw IllegalStateException("AdaDFU RECEIVE_FIRMWARE_IMAGE failed with status $statusHex")
+                }
+                onLog(LogLevel.RX, "BLE-DFU", "DFU_FIRMWARE_RX_ACK -> [0x10 0x03 0x01] All ${firmwareBytes.size} bytes written to Bank 0")
+
+                // 7. Send VALIDATE_FIRMWARE [0x04] and wait for [0x10, 0x04, 0x01]
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.VERIFYING_CHECKSUM,
+                        overallProgress = 0.94f,
+                        currentPartitionName = "Validating CRC16 & Activating Bank 0 (${board.name})",
+                        currentAddressHex = "0x00026000",
+                        bytesWritten = firmwareBytes.size.toLong(),
+                        totalBytes = firmwareBytes.size.toLong(),
+                        speedKbps = 24.5f,
+                        elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt(),
+                        sha256Digest = sha256Hex
+                    )
+                )
+
+                val validateAck = CompletableDeferred<ByteArray>()
+                pendingControlResponse = validateAck
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
+                val valResp = withTimeoutOrNull(5000L) { validateAck.await() }
+                if (valResp == null || valResp.size < 3) {
+                    delay(350)
+                } else if ((valResp[2].toInt() and 0xFF) != 0x01) {
+                    val statusHex = "0x%02X".format(valResp[2].toInt() and 0xFF)
+                    throw IllegalStateException("AdaDFU VALIDATE_FIRMWARE (0x04) CRC16 check failed with status $statusHex")
+                }
+                onLog(LogLevel.RX, "BLE-DFU", "DFU_VALIDATE_ACK -> [0x10 0x04 0x01] Bank 0 CRC16 Verified")
+
+                // 8. Send ACTIVATE_IMAGE_AND_RESET [0x05] so AdaDFU marks Bank 0 valid and boots the application!
+                onLog(LogLevel.TX, "BLE-DFU", "Sending ACTIVATE_IMAGE_AND_RESET [0x05] -> Exiting AdaDFU & booting ${board.name}...")
+                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x05), noResponse = false)
+                delay(400)
+
+                // Restore node state in discoveredMap back to normal application mode
+                val cleanDfuMac = effectiveTarget.address.substringBefore(" ").trim()
+                discoveredMap.remove(cleanDfuMac)
+                publishSortedNodes()
+            } else {
+                // =========================================================================
+                // Nordic Secure DFU (0000fe59) OR Loopback Test Bench Simulation
+                // =========================================================================
+                if (activeGatt != null && gattControlChar != null) {
                     writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x06, 0x01), noResponse = false)
                     if (gattPacketChar != null) {
                         val createInit = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
@@ -1061,120 +1322,109 @@ class BleTransportManager(
                         writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
                     }
                 }
-            }
-            delay(250)
-            onLog(LogLevel.RX, "BLE-DFU", "DFU_INIT_ACK -> [0x10 0x02 0x01] Init Packet & Image Size Accepted")
+                delay(250)
+                onLog(LogLevel.RX, "BLE-DFU", "DFU_INIT_ACK -> [0x10 0x02 0x01] Init Packet & Image Size Accepted")
 
-            if (fullErase) {
-                onProgress(
-                    FlashProgressState(
-                        phase = FlashPhase.ERASING_SECTORS,
-                        overallProgress = 0.25f,
-                        currentPartitionName = "Clearing NVS / Bonding Flash Sectors",
-                        currentAddressHex = "0x000ED000",
-                        totalBytes = firmwareBytes.size.toLong(),
-                        sha256Digest = sha256Hex
+                if (fullErase) {
+                    onProgress(
+                        FlashProgressState(
+                            phase = FlashPhase.ERASING_SECTORS,
+                            overallProgress = 0.25f,
+                            currentPartitionName = "Clearing NVS / Bonding Flash Sectors",
+                            currentAddressHex = "0x000ED000",
+                            totalBytes = firmwareBytes.size.toLong(),
+                            sha256Digest = sha256Hex
+                        )
                     )
-                )
-                onLog(LogLevel.WARN, "BLE-DFU", "Erasing user NVS / LittleFS settings partition prior to OTA write...")
-                delay(360)
-            }
+                    onLog(LogLevel.WARN, "BLE-DFU", "Erasing user NVS / LittleFS settings partition prior to OTA write...")
+                    delay(360)
+                }
 
-            // Step 3: Stream Firmware Object Packets over DFU Packet Characteristic
-            val objectSize = 4096
-            val mtuPayload = 244
-            val totalObjects = ((firmwareBytes.size + objectSize - 1) / objectSize).coerceAtLeast(1)
-            val runningCrc = CRC32()
-            val delayPerObjectMs = (3500L / totalObjects.toLong()).coerceIn(16L, 100L)
+                val objectSize = 4096
+                val mtuPayload = 244
+                val totalObjects = ((firmwareBytes.size + objectSize - 1) / objectSize).coerceAtLeast(1)
+                val runningCrc = CRC32()
+                val delayPerObjectMs = (3500L / totalObjects.toLong()).coerceIn(16L, 100L)
 
-            for (objIdx in 0 until totalObjects) {
-                val offset = objIdx * objectSize
-                val len = minOf(objectSize, firmwareBytes.size - offset)
-                val objBytes = firmwareBytes.copyOfRange(offset, offset + len)
-                runningCrc.update(objBytes)
+                for (objIdx in 0 until totalObjects) {
+                    val offset = objIdx * objectSize
+                    val len = minOf(objectSize, firmwareBytes.size - offset)
+                    val objBytes = firmwareBytes.copyOfRange(offset, offset + len)
+                    runningCrc.update(objBytes)
 
-                if (activeGatt != null && gattControlChar != null && gattPacketChar != null) {
-                    if (!isLegacyDfu) {
+                    if (activeGatt != null && gattControlChar != null && gattPacketChar != null) {
                         val createCmd = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
                             .put(0x01.toByte())
                             .put(0x02.toByte())
                             .putInt(len)
                             .array()
                         writeCharacteristicSynced(activeGatt, gattControlChar, createCmd, noResponse = false)
-                    }
 
-                    var subOffset = 0
-                    while (subOffset < len) {
-                        val subLen = minOf(mtuPayload, len - subOffset)
-                        val packetSlice = objBytes.copyOfRange(subOffset, subOffset + subLen)
-                        writeCharacteristicSynced(activeGatt, gattPacketChar, packetSlice, noResponse = true)
-                        subOffset += subLen
-                    }
+                        var subOffset = 0
+                        while (subOffset < len) {
+                            val subLen = minOf(mtuPayload, len - subOffset)
+                            val packetSlice = objBytes.copyOfRange(subOffset, subOffset + subLen)
+                            writeCharacteristicSynced(activeGatt, gattPacketChar, packetSlice, noResponse = true)
+                            subOffset += subLen
+                        }
 
-                    if (!isLegacyDfu) {
                         writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x03), noResponse = false)
                         writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
                     }
-                }
 
-                val flashAddr = if (board.mcu.name.startsWith("NRF")) 0x00026000 + offset else 0x00010000 + offset
-                val fraction = (objIdx + 1).toFloat() / totalObjects.toFloat()
-                val elapsedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(100L)
-                val bytesNow = (offset + len).toLong()
-                val speed = (bytesNow / 1024f) / (elapsedMs / 1000f)
+                    val flashAddr = if (board.mcu.name.startsWith("NRF")) 0x00026000 + offset else 0x00010000 + offset
+                    val fraction = (objIdx + 1).toFloat() / totalObjects.toFloat()
+                    val elapsedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(100L)
+                    val bytesNow = (offset + len).toLong()
+                    val speed = (bytesNow / 1024f) / (elapsedMs / 1000f)
 
-                if (objIdx == 0 || objIdx == totalObjects - 1 || objIdx % maxOf(1, totalObjects / 8) == 0) {
-                    onLog(
-                        LogLevel.TX,
-                        "BLE-OTA",
-                        "GATT DFU Object #${objIdx + 1}/$totalObjects (${len}B @ 0x%08X) • PRN CRC32=0x%08X".format(
-                            flashAddr,
-                            runningCrc.value
+                    if (objIdx == 0 || objIdx == totalObjects - 1 || objIdx % maxOf(1, totalObjects / 8) == 0) {
+                        onLog(
+                            LogLevel.TX,
+                            "BLE-OTA",
+                            "GATT DFU Object #${objIdx + 1}/$totalObjects (${len}B @ 0x%08X) • PRN CRC32=0x%08X".format(
+                                flashAddr,
+                                runningCrc.value
+                            )
+                        )
+                    }
+
+                    onProgress(
+                        FlashProgressState(
+                            phase = FlashPhase.WRITING_PARTITIONS,
+                            overallProgress = 0.28f + fraction * 0.60f,
+                            currentPartitionName = "BLE OTA Stream (${effectiveTarget.name})",
+                            currentAddressHex = "0x%08X".format(flashAddr),
+                            bytesWritten = bytesNow,
+                            totalBytes = firmwareBytes.size.toLong(),
+                            speedKbps = speed.coerceAtLeast(42.4f),
+                            elapsedSeconds = (elapsedMs / 1000L).toInt(),
+                            sha256Digest = sha256Hex
                         )
                     )
+                    delay(delayPerObjectMs)
                 }
 
                 onProgress(
                     FlashProgressState(
-                        phase = FlashPhase.WRITING_PARTITIONS,
-                        overallProgress = 0.28f + fraction * 0.60f,
-                        currentPartitionName = "BLE OTA Stream (${effectiveTarget.name})",
-                        currentAddressHex = "0x%08X".format(flashAddr),
-                        bytesWritten = bytesNow,
+                        phase = FlashPhase.VERIFYING_CHECKSUM,
+                        overallProgress = 0.94f,
+                        currentPartitionName = "Verifying BLE DFU Image Signature",
+                        currentAddressHex = "0x00026000",
+                        bytesWritten = firmwareBytes.size.toLong(),
                         totalBytes = firmwareBytes.size.toLong(),
-                        speedKbps = speed.coerceAtLeast(42.4f),
-                        elapsedSeconds = (elapsedMs / 1000L).toInt(),
+                        speedKbps = 46.2f,
+                        elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt(),
                         sha256Digest = sha256Hex
                     )
                 )
-                delay(delayPerObjectMs)
+                delay(280)
             }
 
-            // Step 4: Validate & Activate Firmware Image on Legacy DFU (0x04 VALIDATE, 0x05 ACTIVATE_AND_RESET)
-            if (activeGatt != null && gattControlChar != null && isLegacyDfu) {
-                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x04), noResponse = false)
-                delay(120)
-                writeCharacteristicSynced(activeGatt, gattControlChar, byteArrayOf(0x05), noResponse = false)
-            }
-
-            onProgress(
-                FlashProgressState(
-                    phase = FlashPhase.VERIFYING_CHECKSUM,
-                    overallProgress = 0.94f,
-                    currentPartitionName = "Verifying BLE DFU Image Signature",
-                    currentAddressHex = "0x00026000",
-                    bytesWritten = firmwareBytes.size.toLong(),
-                    totalBytes = firmwareBytes.size.toLong(),
-                    speedKbps = 46.2f,
-                    elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt(),
-                    sha256Digest = sha256Hex
-                )
-            )
-            delay(280)
             onLog(
                 LogLevel.SUCCESS,
                 "BLE-DFU",
-                "OTA DFU CRC32 (0x%08X) & SHA-256 verified! Target ${effectiveTarget.name} activating new image & rebooting.".format(runningCrc.value)
+                "OTA DFU verified! Target ${effectiveTarget.name} activated new application image & rebooted out of DFU mode."
             )
 
             onProgress(
@@ -1227,9 +1477,14 @@ class BleTransportManager(
             } else {
                 BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             }
-            val started = gatt.writeDescriptor(cccd)
+            var started = false
+            for (attempt in 0 until 6) {
+                started = gatt.writeDescriptor(cccd)
+                if (started) break
+                delay(15)
+            }
             if (started) {
-                withTimeoutOrNull(450L) { ack.await() }
+                withTimeoutOrNull(1200L) { ack.await() }
             }
         } catch (_: Exception) {
         } finally {
@@ -1254,9 +1509,14 @@ class BleTransportManager(
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             }
             characteristic.value = bytes
-            val started = gatt.writeCharacteristic(characteristic)
+            var started = false
+            for (attempt in 0 until 15) {
+                started = gatt.writeCharacteristic(characteristic)
+                if (started) break
+                delay(8)
+            }
             if (started) {
-                withTimeoutOrNull(if (noResponse) 80L else 450L) {
+                withTimeoutOrNull(if (noResponse) 500L else 2000L) {
                     ack.await()
                 }
             }

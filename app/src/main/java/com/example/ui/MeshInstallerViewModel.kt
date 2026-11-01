@@ -1265,6 +1265,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                         sha256Hex = preparedImage.sha256Hex,
                         fullErase = snapshot.fullFlashErase,
                         loopbackBench = snapshot.loopbackTestBench,
+                        isRealBinary = preparedImage.isRealBinary,
                         onProgress = { progress ->
                             _uiState.update { it.copy(flashProgress = progress) }
                         }
