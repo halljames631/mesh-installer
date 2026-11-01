@@ -1,0 +1,52 @@
+Mesh Installer
+Copyright 2026 Mesh Installer Contributors
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for more details.
+
+========================================================================
+Third-Party Open Source Software & Licenses
+========================================================================
+
+This project interacts with, bundles protocol logic for, or depends on the
+following open-source software libraries and projects:
+
+1. Meshtastic Firmware & Protocols
+   - Organization: Meshtastic LLC & Open Source Contributors
+   - Repository: https://github.com/meshtastic/firmware
+   - License: GNU General Public License v3.0 / Apache License 2.0
+
+2. MeshCore Firmware & Serial Protocols
+   - Organization: MeshCore Project Developers
+   - Repository: https://github.com/meshcore-dev/MeshCore
+   - License: GNU General Public License v3.0
+
+3. esptool SLIP ROM Protocol
+   - Organization: Espressif Systems (Shanghai) Co., Ltd.
+   - Repository: https://github.com/espressif/esptool
+   - License: GNU General Public License v2.0 or later
+
+4. Nordic Semiconductor Secure DFU
+   - Organization: Nordic Semiconductor ASA
+   - Repository: https://github.com/NordicSemiconductor/Android-DFU-Library
+   - License: BSD 3-Clause License
+
+5. Square OkHttp
+   - Organization: Square, Inc.
+   - Repository: https://github.com/square/okhttp
+   - License: Apache License, Version 2.0
+
+6. Android Jetpack & Compose Libraries
+   - Organization: Google LLC & The Android Open Source Project
+   - Repository: https://android.googlesource.com/
+   - License: Apache License, Version 2.0
+
+7. Kotlin & Kotlinx Coroutines
+   - Organization: JetBrains s.r.o.
+   - Repository: https://github.com/Kotlin/kotlinx.coroutines
+   - License: Apache License, Version 2.0
+
+8. Google Material Design 3 Components & Icons
+   - Organization: Google LLC
+   - Repository: https://github.com/material-components/material-components-android
+   - License: Apache License, Version 2.0
