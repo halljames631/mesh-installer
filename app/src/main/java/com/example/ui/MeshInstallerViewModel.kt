@@ -83,6 +83,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
     private val logCounter = AtomicLong(1L)
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
     private var batchDownloadJob: Job? = null
+    private var bleScanJob: Job? = null
 
     private val initialMyDevices = vaultManager.getMyDeviceIds()
     private val initialBoard = BoardCatalog.allBoards.firstOrNull { it.id in initialMyDevices }
@@ -909,10 +910,15 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun startBleScan() {
+        bleScanJob?.cancel()
         _uiState.update { it.copy(isBleScanning = true) }
-        bleManager.startBleScan(loopbackBench = _uiState.value.loopbackTestBench)
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(4000)
+        val startedHardwareScan = bleManager.startBleScan(loopbackBench = _uiState.value.loopbackTestBench)
+        bleScanJob = viewModelScope.launch {
+            if (startedHardwareScan) {
+                kotlinx.coroutines.delay(8000)
+            } else {
+                kotlinx.coroutines.delay(800)
+            }
             bleManager.stopBleScan()
             _uiState.update { it.copy(isBleScanning = false) }
         }

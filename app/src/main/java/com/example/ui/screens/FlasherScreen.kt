@@ -144,6 +144,7 @@ fun FlasherWorkbenchScreen(
             onSelectBleNode = onSelectBleNode,
             onToggleFullErase = onToggleFullErase,
             onToggleBundleWebUi = onToggleBundleWebUi,
+            onToggleLoopbackBench = onToggleLoopbackBench,
             onImportCustomFile = onImportCustomFile,
             onClearCustomFile = onClearCustomFile,
             onStartFlash = onStartFlash,
@@ -177,6 +178,7 @@ private fun FlasherIdleView(
     onSelectBleNode: (BleDiscoveredNode) -> Unit,
     onToggleFullErase: (Boolean) -> Unit,
     onToggleBundleWebUi: (Boolean) -> Unit,
+    onToggleLoopbackBench: (Boolean) -> Unit,
     onImportCustomFile: () -> Unit,
     onClearCustomFile: () -> Unit,
     onStartFlash: () -> Unit,
@@ -416,45 +418,51 @@ private fun FlasherIdleView(
                                 color = TextSecondary
                             )
                             Spacer(modifier = Modifier.height(2.dp))
-                            val portText = if (usbDev != null) {
-                                "Port: ${usbDev.deviceName} (Vendor: 0x%04X)".format(usbDev.vendorId)
-                            } else {
-                                "Port: /dev/bus/usb/001/002 (Vendor: 0x%04X • ${board.usbBridge})".format(board.vendorId)
+                            val portText = when {
+                                uiState.selectedTransport == ConnectionTransport.BLE_DFU && uiState.selectedBleNode != null ->
+                                    "BLE Target: ${uiState.selectedBleNode.name} [${uiState.selectedBleNode.address}] (${uiState.selectedBleNode.rssi} dBm)"
+                                uiState.selectedTransport == ConnectionTransport.BLE_DFU ->
+                                    "BLE OTA Mode • Select or scan a nearby BLE radio below"
+                                usbDev != null ->
+                                    "Port: ${usbDev.deviceName} (Vendor: 0x%04X)".format(usbDev.vendorId)
+                                else ->
+                                    "Port: /dev/bus/usb/001/002 (Vendor: 0x%04X • ${board.usbBridge})".format(board.vendorId)
                             }
                             Text(
                                 text = portText,
                                 style = TextStyle(
                                     fontSize = 11.sp,
-                                    color = BlueAccent
+                                    color = if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) PurpleAccent else BlueAccent
                                 )
                             )
                         }
 
-                        // Green Active Pulse Indicator
+                        // Active Pulse Indicator
                         Box(
                             modifier = Modifier.size(24.dp),
                             contentAlignment = Alignment.Center
                         ) {
+                            val pulseColor = if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) PurpleAccent else GreenSuccess
                             Box(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .clip(CircleShape)
-                                    .border(1.5.dp, GreenSuccess.copy(alpha = 0.4f), CircleShape)
+                                    .border(1.5.dp, pulseColor.copy(alpha = 0.4f), CircleShape)
                             )
                             Box(
                                 modifier = Modifier
                                     .size(10.dp)
                                     .clip(CircleShape)
-                                    .background(GreenSuccess)
+                                    .background(pulseColor)
                             )
                         }
                     }
 
                     // Quick Hardware & Transport Selector Row
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -462,7 +470,7 @@ private fun FlasherIdleView(
                                 .background(Color(0xFF1C232D))
                                 .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
                                 .clickable { onOpenBoardPicker() }
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
                                 .testTag("change_radio_button")
                         ) {
                             Text(
@@ -475,30 +483,59 @@ private fun FlasherIdleView(
                             )
                         }
 
+                        val isUsbMode = uiState.selectedTransport == ConnectionTransport.USB_OTG
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isUsbMode) DarkTealCard else Color(0xFF1C232D))
+                                .border(
+                                    1.dp,
+                                    if (isUsbMode) CyberTeal else Color(0xFF2D3748),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable {
+                                    onSelectTransport(ConnectionTransport.USB_OTG)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .testTag("transport_usb_button")
+                        ) {
+                            Text(
+                                text = "USB OTG Serial",
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isUsbMode) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = if (isUsbMode) CyberCyan else TextSecondary
+                                )
+                            )
+                        }
+
                         if (board.mcu.supportsBleDfu) {
                             val isBle = uiState.selectedTransport == ConnectionTransport.BLE_DFU
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isBle) PurpleAccent.copy(alpha = 0.2f) else Color(0xFF1C232D))
+                                    .background(if (isBle) PurpleAccent.copy(alpha = 0.22f) else Color(0xFF1C232D))
                                     .border(
                                         1.dp,
                                         if (isBle) PurpleAccent else Color(0xFF2D3748),
                                         RoundedCornerShape(6.dp)
                                     )
                                     .clickable {
-                                        onSelectTransport(
-                                            if (isBle) ConnectionTransport.USB_OTG else ConnectionTransport.BLE_DFU
-                                        )
+                                        if (isBle) {
+                                            onSelectTransport(ConnectionTransport.USB_OTG)
+                                        } else {
+                                            onSelectTransport(ConnectionTransport.BLE_DFU)
+                                            onStartBleScanWithPermissions()
+                                        }
                                     }
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
                                     .testTag("toggle_transport_button")
                             ) {
                                 Text(
-                                    text = if (isBle) "Mode: BLE OTA DFU" else "Switch to BLE DFU",
+                                    text = if (isBle) "BLE OTA DFU ✓" else "BLE OTA DFU",
                                     style = TextStyle(
                                         fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = if (isBle) FontWeight.Bold else FontWeight.SemiBold,
                                         color = if (isBle) PurpleAccent else TextSecondary
                                     )
                                 )
@@ -506,36 +543,163 @@ private fun FlasherIdleView(
                         }
                     }
 
-                    // If BLE DFU transport is active, show discovered BLE nodes
-                    if (uiState.selectedTransport == ConnectionTransport.BLE_DFU && uiState.bleDiscoveredNodes.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            uiState.bleDiscoveredNodes.take(3).forEach { node ->
-                                val isSelected = uiState.selectedBleNode?.address == node.address
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isSelected) DarkTealCard else Color(0xFF11161D))
-                                        .border(
-                                            1.dp,
-                                            if (isSelected) CyberTeal else CardBorder,
-                                            RoundedCornerShape(6.dp)
-                                        )
-                                        .clickable { onSelectBleNode(node) }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                    // Dedicated BLE OTA Scanner & Target Picker when BLE_DFU is active
+                    if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF0F141C))
+                                .border(1.dp, PurpleAccent.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (uiState.isBleScanning) {
+                                        "SCANNING BLE RADIOS..."
+                                    } else {
+                                        "BLE OTA TARGETS (${uiState.bleDiscoveredNodes.size})"
+                                    },
+                                    style = TextStyle(
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.6.sp,
+                                        color = PurpleAccent
+                                    )
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(PurpleAccent.copy(alpha = 0.2f))
+                                            .border(1.dp, PurpleAccent, RoundedCornerShape(6.dp))
+                                            .clickable { onStartBleScanWithPermissions() }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            .testTag("ble_rescan_button")
                                     ) {
                                         Text(
-                                            text = "${node.name} (${node.address})",
-                                            style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                            text = if (uiState.isBleScanning) "SCANNING..." else "RESCAN BLE",
+                                            style = TextStyle(
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
                                         )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0xFF1C232D))
+                                            .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                onToggleLoopbackBench(true)
+                                                onStartBleScanWithPermissions()
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            .testTag("ble_simulate_nodes_button")
+                                    ) {
                                         Text(
-                                            text = "${node.rssi} dBm",
-                                            style = TextStyle(fontSize = 10.sp, color = CyberCyan)
+                                            text = "SIMULATE BLE",
+                                            style = TextStyle(
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = CyberCyan
+                                            )
                                         )
+                                    }
+                                }
+                            }
+
+                            if (uiState.bleDiscoveredNodes.isEmpty()) {
+                                Text(
+                                    text = if (uiState.isBleScanning) {
+                                        "Listening for Meshtastic, MeshCore & Nordic DFU BLE advertisements..."
+                                    } else {
+                                        "No BLE radios detected yet. Make sure Bluetooth is ON and permission is granted, or tap 'SIMULATE BLE' to test wireless DFU."
+                                    },
+                                    style = TextStyle(
+                                        fontSize = 10.5.sp,
+                                        color = TextSecondary
+                                    )
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    uiState.bleDiscoveredNodes.take(6).forEach { node ->
+                                        val isSelected = uiState.selectedBleNode?.address == node.address
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (isSelected) DarkTealCard else Color(0xFF161B22))
+                                                .border(
+                                                    1.dp,
+                                                    if (isSelected) CyberTeal else CardBorder,
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .clickable { onSelectBleNode(node) }
+                                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                                .testTag("ble_node_${node.address}")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(14.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (isSelected) CyberTeal else Color(0xFF30363D)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(6.dp)
+                                                                .clip(CircleShape)
+                                                                .background(DeepDarkBg)
+                                                        )
+                                                    }
+                                                    Column {
+                                                        Text(
+                                                            text = node.name,
+                                                            style = TextStyle(
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White
+                                                            ),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = node.address + (if (node.isInDfuMode) " • DFU Bootloader" else " • BLE GATT"),
+                                                            style = TextStyle(
+                                                                fontSize = 9.5.sp,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                color = if (node.isInDfuMode) GreenSuccess else TextSecondary
+                                                            )
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = "${node.rssi} dBm",
+                                                    style = TextStyle(
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = CyberCyan
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1313,10 +1477,14 @@ private fun FlashingProgressView(
                                 color = TextPrimary
                             )
                             Text(
-                                text = "ESPTOOL SLIP PROTOCOL ACTIVE",
+                                text = if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) {
+                                    "BLE OTA DFU PROTOCOL ACTIVE"
+                                } else {
+                                    "ESPTOOL SLIP PROTOCOL ACTIVE"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = BlueAccent,
+                                color = if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) PurpleAccent else BlueAccent,
                                 letterSpacing = 0.5.sp
                             )
                         }
@@ -1330,7 +1498,11 @@ private fun FlashingProgressView(
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "921.6 KBPS",
+                            text = if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) {
+                                "%.1f KBPS".format(Locale.US, uiState.flashProgress.speedKbps.coerceAtLeast(42.4f))
+                            } else {
+                                "921.6 KBPS"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = GreenSuccess

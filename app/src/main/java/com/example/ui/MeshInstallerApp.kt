@@ -100,11 +100,29 @@ fun MeshInstallerApp(
         }
     }
 
+    // System dialog to turn on Bluetooth if adapter is currently disabled
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        viewModel.startBleScan()
+    }
+
     // Runtime Bluetooth permissions launcher for BLE OTA DFU scanning
     val blePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        viewModel.startBleScan()
+    ) { grantedMap ->
+        val anyGranted = grantedMap.values.any { it }
+        if (anyGranted && !viewModel.bleManager.isBluetoothEnabled()) {
+            try {
+                enableBluetoothLauncher.launch(
+                    android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                )
+            } catch (_: Exception) {
+                viewModel.startBleScan()
+            }
+        } else {
+            viewModel.startBleScan()
+        }
     }
 
     val triggerBleScanWithPermissions = {
