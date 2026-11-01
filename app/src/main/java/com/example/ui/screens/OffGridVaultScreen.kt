@@ -1,0 +1,375 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.model.BoardCatalog
+import com.example.model.CachedFirmwareEntry
+import com.example.model.FirmwareEcosystem
+import com.example.model.HardwareBoard
+import com.example.ui.MeshInstallerUiState
+import com.example.ui.theme.BlueAccent
+import com.example.ui.theme.CardBorder
+import com.example.ui.theme.CardDarkBg
+import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.CyberTeal
+import com.example.ui.theme.DarkTealBorder
+import com.example.ui.theme.DarkTealCard
+import com.example.ui.theme.DeepDarkBg
+import com.example.ui.theme.GreenSuccess
+import com.example.ui.theme.PurpleAccent
+import com.example.ui.theme.TextMuted
+import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.VaultNavyBorder
+import com.example.ui.theme.VaultNavyHeader
+import java.util.Locale
+
+@Composable
+fun OffGridVaultScreen(
+    uiState: MeshInstallerUiState,
+    onSelectBoard: (HardwareBoard) -> Unit,
+    onDownloadAllForSelected: () -> Unit,
+    onUseSavedEntry: (CachedFirmwareEntry) -> Unit,
+    onToggleMyDevice: (String) -> Unit,
+    onClearVault: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val savedCount = uiState.offlineVaultEntries.size
+    val isDownloading = uiState.vaultBatchProgress.isDownloading
+    val totalSavedMb = uiState.offlineVaultEntries.sumOf { it.sizeBytes } / (1024f * 1024f)
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .background(DeepDarkBg)
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Top Card matching Image 4
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(VaultNavyHeader, Color(0xFF1C354D))
+                        )
+                    )
+                    .border(1.dp, VaultNavyBorder, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(BlueAccent.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Offline Vault",
+                                tint = BlueAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Offline Vault",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "MY DEVICES • 100% OFF-GRID READY",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BlueAccent,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+                    }
+
+                    // Count Badge Pill
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(GreenSuccess.copy(alpha = 0.2f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (savedCount > 0) "$savedCount READY" else "VAULT READY",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = GreenSuccess
+                        )
+                    }
+                }
+            }
+        }
+
+        // Info Banner matching Image 4
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(DarkTealCard)
+                    .border(1.dp, CyberTeal.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = CyberCyan,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "All saved firmwares available offline in the wilderness",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF7EE787),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        // Device Cards matching Image 4
+        items(BoardCatalog.allBoards, key = { it.id }) { board ->
+            val cachedEntries = uiState.offlineVaultEntries.filter { it.boardId == board.id }
+            val isCached = cachedEntries.isNotEmpty()
+            val cachedBytes = cachedEntries.sumOf { it.sizeBytes }
+            val cachedMb = cachedBytes / (1024f * 1024f)
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CardDarkBg)
+                    .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                    .clickable { onSelectBoard(board) }
+                    .padding(16.dp)
+                    .testTag("vault_board_card_${board.id}")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = board.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${board.mcu.name.replace('_', '-')} • ${board.flashSizeMb}MB Flash • ${board.pinoutSummary}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Badges Row
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Primary Firmware Tag
+                            if (board.id == "lilygo_tdeck") {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(DarkTealCard)
+                                        .border(1.dp, CyberTeal, RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "Meshtastic Alpha 2.8.1 (MUI)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CyberCyan
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF1F2833))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "MeshCore Ripple",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextSecondary
+                                    )
+                                }
+                            } else if (board.mcu.name.startsWith("NRF52")) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF1C232D))
+                                        .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "Nordic UF2 / BLE DFU",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PurpleAccent
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF1C232D))
+                                        .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "Meshtastic Stable 2.5.4",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BlueAccent
+                                    )
+                                }
+                            }
+
+                            // Cached Badge
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(GreenSuccess.copy(alpha = 0.25f))
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = if (isCached) "CACHED (%.1f MB)".format(Locale.US, cachedMb) else "READY FOR CACHE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GreenSuccess
+                                )
+                            }
+                        }
+                    }
+
+                    // Action chevron button
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (board.id == "lilygo_tdeck") CyberTeal.copy(alpha = 0.15f) else BlueAccent.copy(alpha = 0.15f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Select ${board.name}",
+                            tint = if (board.id == "lilygo_tdeck") CyberCyan else BlueAccent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Bottom Action Button: SYNC & UPDATE ALL FIRMWARES
+        item {
+            Spacer(modifier = Modifier.height(6.dp))
+            Button(
+                onClick = onDownloadAllForSelected,
+                enabled = !isDownloading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("vault_sync_all_button"),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BlueAccent,
+                    contentColor = Color.White
+                )
+            ) {
+                if (isDownloading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "DOWNLOADING... (${uiState.vaultBatchProgress.currentIndex}/${uiState.vaultBatchProgress.totalCount})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "SYNC & UPDATE ALL FIRMWARES",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 12.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
+        }
+    }
+}

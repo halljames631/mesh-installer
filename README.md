@@ -13,20 +13,6 @@ Flash, update, or configure radio nodes directly from your Android phone or tabl
 
 ---
 
-## 📸 App Screenshots
-
-| Dashboard & Flasher | High-Speed ROM Flashing |
-| :---: | :---: |
-| <img src="docs/screenshots/dashboard.svg" width="340" alt="Mesh Installer Dashboard" /> | <img src="docs/screenshots/flashing.svg" width="340" alt="Firmware Flashing Progress" /> |
-| **Radio Auto-Detection & Variant Selection**<br>LilyGO T-Deck MUI vs BaseUI, Stable vs Alpha | **Real-Time Flashing & Verification**<br>Up to 921,600 baud, partition writing & CRC32 |
-
-| Live 8N1 Serial Monitor | 100% Off-Grid Firmware Vault |
-| :---: | :---: |
-| <img src="docs/screenshots/terminal.svg" width="340" alt="Serial Monitor & CLI" /> | <img src="docs/screenshots/vault.svg" width="340" alt="Offline Firmware Vault" /> |
-| **Interactive CLI & Color-Coded Logs**<br>TX/RX packets, SNR/RSSI, baud rate selector | **"My Devices" Pre-Cached Binaries**<br>Zero internet or cellular needed in the field |
-
----
-
 ## ⚡ Key Features
 
 - **Direct USB OTG Flashing (Zero PC Required)**:

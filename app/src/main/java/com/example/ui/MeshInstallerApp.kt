@@ -7,35 +7,24 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DeveloperBoard
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -51,30 +40,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.model.ConnectionTransport
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.ui.theme.MyApplicationTheme
-import com.example.model.FirmwareEcosystem
-import com.example.ui.components.HardwareChipBadge
 import com.example.ui.screens.BoardsCatalogScreen
 import com.example.ui.screens.FirmwareReleasesScreen
 import com.example.ui.screens.FlasherWorkbenchScreen
 import com.example.ui.screens.OffGridVaultDialog
+import com.example.ui.screens.OffGridVaultScreen
 import com.example.ui.screens.SerialConsoleScreen
+import com.example.ui.screens.TestBenchScreen
 import com.example.ui.theme.AmberSignal
-import com.example.ui.theme.MeshCoreCyan
-import com.example.ui.theme.MeshtasticGreen
-import com.example.ui.theme.ObsidianBg
-import com.example.ui.theme.SlateBorder
-import com.example.ui.theme.SlateCard
-import com.example.ui.theme.SlateSurface
-import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.BlueAccent
+import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.CyberTeal
+import com.example.ui.theme.DeepDarkBg
+import com.example.ui.theme.PurpleAccent
 import com.example.ui.theme.TextSecondary
 
 enum class InstallerTab(
@@ -82,10 +69,12 @@ enum class InstallerTab(
     val title: String,
     val icon: ImageVector
 ) {
-    FLASHER("flasher", "Install", Icons.Default.Bolt),
+    FLASHER("flasher", "Flasher", Icons.Default.NearMe),
+    TERMINAL("terminal", "Terminal", Icons.Default.Terminal),
+    VAULT("vault", "Vault", Icons.Default.Lock),
+    TEST_BENCH("test_bench", "Test Bench", Icons.Default.RadioButtonUnchecked),
     BOARDS("boards", "Radios", Icons.Default.DeveloperBoard),
-    RELEASES("releases", "Versions", Icons.Default.CloudDownload),
-    CONSOLE("console", "Logs & CLI", Icons.Default.Terminal)
+    RELEASES("releases", "Versions", Icons.Default.CloudDownload)
 }
 
 @Composable
@@ -95,7 +84,7 @@ fun MeshInstallerApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var currentTab by rememberSaveable { mutableStateOf(InstallerTab.FLASHER) }
 
-    // BackHandler on secondary tabs returns to primary Flasher Workbench
+    // BackHandler on secondary screens returns to primary Flasher
     if (currentTab != InstallerTab.FLASHER) {
         BackHandler {
             currentTab = InstallerTab.FLASHER
@@ -133,70 +122,69 @@ fun MeshInstallerApp(
         blePermissionLauncher.launch(perms)
     }
 
-    val ecoColor = if (uiState.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
-        MeshtasticGreen
-    } else {
-        MeshCoreCyan
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(ObsidianBg)
+            .background(DeepDarkBg)
     ) {
         val isWideScreen = maxWidth >= 680.dp
 
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
-            containerColor = ObsidianBg,
-            topBar = {
-                MeshInstallerTopBar(
-                    uiState = uiState,
-                    ecoColor = ecoColor,
-                    onOpenOffGridVault = viewModel::openOffGridSetupDialog,
-                    onStatusClick = {
-                        val usbDev = uiState.usbAttachedBoards.firstOrNull()
-                        if (uiState.selectedTransport == ConnectionTransport.USB_OTG) {
-                            if (usbDev != null && !usbDev.hasPermission) {
-                                viewModel.requestUsbPermission(usbDev)
-                            } else {
-                                viewModel.rescanUsbBus()
-                            }
-                        } else {
-                            triggerBleScanWithPermissions()
-                        }
-                    }
-                )
-            },
+            containerColor = DeepDarkBg,
             bottomBar = {
                 if (!isWideScreen) {
+                    val mainTabs = listOf(
+                        InstallerTab.FLASHER,
+                        InstallerTab.TERMINAL,
+                        InstallerTab.VAULT,
+                        InstallerTab.TEST_BENCH
+                    )
                     NavigationBar(
-                        containerColor = SlateSurface,
-                        tonalElevation = 8.dp
+                        containerColor = Color(0xFF0D1117),
+                        tonalElevation = 0.dp,
+                        modifier = Modifier.border(width = 1.dp, color = Color(0xFF21262D))
                     ) {
-                        InstallerTab.entries.forEach { tab ->
+                        mainTabs.forEach { tab ->
                             val selected = currentTab == tab
+                            val tabColor = when (tab) {
+                                InstallerTab.FLASHER -> CyberCyan
+                                InstallerTab.TERMINAL -> PurpleAccent
+                                InstallerTab.VAULT -> BlueAccent
+                                InstallerTab.TEST_BENCH -> AmberSignal
+                                else -> CyberCyan
+                            }
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { currentTab = tab },
                                 icon = {
-                                    Icon(
-                                        imageVector = tab.icon,
-                                        contentDescription = tab.title
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(if (selected) tabColor.copy(alpha = 0.15f) else Color.Transparent),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.title,
+                                            tint = if (selected) tabColor else TextSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 },
                                 label = {
                                     Text(
                                         text = tab.title,
-                                        style = MaterialTheme.typography.labelMedium
+                                        style = TextStyle(
+                                            fontSize = 10.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (selected) tabColor else TextSecondary
+                                        )
                                     )
                                 },
                                 colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = ObsidianBg,
-                                    selectedTextColor = ecoColor,
-                                    indicatorColor = ecoColor,
-                                    unselectedIconColor = TextSecondary,
-                                    unselectedTextColor = TextSecondary
+                                    indicatorColor = Color.Transparent
                                 ),
                                 modifier = Modifier.testTag("nav_tab_${tab.route}")
                             )
@@ -212,18 +200,32 @@ fun MeshInstallerApp(
             ) {
                 if (isWideScreen) {
                     NavigationRail(
-                        containerColor = SlateSurface,
+                        containerColor = Color(0xFF0D1117),
                         modifier = Modifier.fillMaxHeight()
                     ) {
-                        InstallerTab.entries.forEach { tab ->
+                        val mainTabs = listOf(
+                            InstallerTab.FLASHER,
+                            InstallerTab.TERMINAL,
+                            InstallerTab.VAULT,
+                            InstallerTab.TEST_BENCH
+                        )
+                        mainTabs.forEach { tab ->
                             val selected = currentTab == tab
+                            val tabColor = when (tab) {
+                                InstallerTab.FLASHER -> CyberCyan
+                                InstallerTab.TERMINAL -> PurpleAccent
+                                InstallerTab.VAULT -> BlueAccent
+                                InstallerTab.TEST_BENCH -> AmberSignal
+                                else -> CyberCyan
+                            }
                             NavigationRailItem(
                                 selected = selected,
                                 onClick = { currentTab = tab },
                                 icon = {
                                     Icon(
                                         imageVector = tab.icon,
-                                        contentDescription = tab.title
+                                        contentDescription = tab.title,
+                                        tint = if (selected) tabColor else TextSecondary
                                     )
                                 },
                                 label = { Text(tab.title) },
@@ -247,8 +249,8 @@ fun MeshInstallerApp(
                             onSelectBoard = viewModel::selectBoard,
                             onOpenBoardPicker = { currentTab = InstallerTab.BOARDS },
                             onOpenReleasesPicker = { currentTab = InstallerTab.RELEASES },
-                            onOpenConsole = { currentTab = InstallerTab.CONSOLE },
-                            onOpenOffGridVault = viewModel::openOffGridSetupDialog,
+                            onOpenConsole = { currentTab = InstallerTab.TERMINAL },
+                            onOpenOffGridVault = { currentTab = InstallerTab.VAULT },
                             onDownloadAllForSelected = viewModel::downloadAllFirmwareForMyDevices,
                             onUseSavedEntry = { entry ->
                                 viewModel.useSavedVaultEntryAsLocalFile(entry)
@@ -272,6 +274,41 @@ fun MeshInstallerApp(
                             onTriggerEspReset = viewModel::triggerEspReset,
                             onStartFlash = viewModel::startFirmwareFlash,
                             onResetFlashState = viewModel::resetFlashState
+                        )
+
+                        InstallerTab.TERMINAL -> SerialConsoleScreen(
+                            uiState = uiState,
+                            onSendCommand = viewModel::sendConsoleCommand,
+                            onTrigger1200BpsTouch = viewModel::trigger1200BpsDfuTouch,
+                            onTriggerEspReset = viewModel::triggerEspReset,
+                            onClearLogs = viewModel::clearConsoleLogs
+                        )
+
+                        InstallerTab.VAULT -> OffGridVaultScreen(
+                            uiState = uiState,
+                            onSelectBoard = { board ->
+                                viewModel.selectBoard(board)
+                                currentTab = InstallerTab.FLASHER
+                            },
+                            onDownloadAllForSelected = viewModel::downloadAllFirmwareForMyDevices,
+                            onUseSavedEntry = { entry ->
+                                viewModel.useSavedVaultEntryAsLocalFile(entry)
+                                currentTab = InstallerTab.FLASHER
+                            },
+                            onToggleMyDevice = viewModel::toggleMyDevice,
+                            onClearVault = viewModel::clearOfflineVault
+                        )
+
+                        InstallerTab.TEST_BENCH -> TestBenchScreen(
+                            uiState = uiState,
+                            onToggleLoopbackBench = viewModel::toggleLoopbackBench,
+                            onTrigger1200BpsTouch = viewModel::trigger1200BpsDfuTouch,
+                            onTriggerEspReset = viewModel::triggerEspReset,
+                            onStartSimulatedFlash = {
+                                viewModel.toggleLoopbackBench(true)
+                                viewModel.startFirmwareFlash()
+                                currentTab = InstallerTab.FLASHER
+                            }
                         )
 
                         InstallerTab.BOARDS -> BoardsCatalogScreen(
@@ -303,14 +340,6 @@ fun MeshInstallerApp(
                                 firmwareFileLauncher.launch(arrayOf("*/*"))
                             }
                         )
-
-                        InstallerTab.CONSOLE -> SerialConsoleScreen(
-                            uiState = uiState,
-                            onSendCommand = viewModel::sendConsoleCommand,
-                            onTrigger1200BpsTouch = viewModel::trigger1200BpsDfuTouch,
-                            onTriggerEspReset = viewModel::triggerEspReset,
-                            onClearLogs = viewModel::clearConsoleLogs
-                        )
                     }
                 }
             }
@@ -327,7 +356,7 @@ fun MeshInstallerApp(
                 onDownloadSingleBoard = viewModel::downloadSingleBoardFirmware,
                 onUseSavedEntry = { entry ->
                     viewModel.useSavedVaultEntryAsLocalFile(entry)
-                    currentTab = InstallerTab.FLASHER
+                    viewModel.closeOffGridSetupDialog()
                 },
                 onCancelDownload = viewModel::cancelBatchDownload,
                 onClearVault = viewModel::clearOfflineVault,
@@ -336,145 +365,3 @@ fun MeshInstallerApp(
         }
     }
 }
-
-@Composable
-private fun MeshInstallerTopBar(
-    uiState: MeshInstallerUiState,
-    ecoColor: androidx.compose.ui.graphics.Color,
-    onOpenOffGridVault: () -> Unit,
-    onStatusClick: () -> Unit
-) {
-    val activeFirmwareSummary = when {
-        uiState.selectedBoard.id == "lilygo_tdeck" && uiState.selectedEcosystem == FirmwareEcosystem.MESHTASTIC ->
-            if (uiState.tDeckMeshtasticMui) "Meshtastic UI (MUI)" else "Meshtastic BaseUI"
-        uiState.selectedBoard.id == "lilygo_tdeck" && uiState.selectedEcosystem == FirmwareEcosystem.MESHCORE ->
-            "MeshCore • ${uiState.tDeckMeshCoreFlavor.label}"
-        else -> uiState.selectedEcosystem.displayName
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(SlateSurface)
-            .windowInsetsPadding(
-                WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
-            )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(SlateCard)
-                        .border(1.5.dp, ecoColor, RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bolt,
-                        contentDescription = "Mesh Installer",
-                        tint = ecoColor,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Text(
-                        text = "Mesh Installer",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "$activeFirmwareSummary • ${uiState.selectedBoard.name}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary,
-                        maxLines = 1
-                    )
-                }
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val savedCount = uiState.offlineVaultEntries.size
-                HardwareChipBadge(
-                    text = if (savedCount > 0) "OFF-GRID ($savedCount)" else "OFF-GRID",
-                    color = if (savedCount > 0) MeshtasticGreen else MeshCoreCyan,
-                    modifier = Modifier
-                        .clickable { onOpenOffGridVault() }
-                        .testTag("topbar_offgrid_vault_button")
-                )
-
-                val usbDev = uiState.usbAttachedBoards.firstOrNull()
-                val (transportText, pillColor) = when {
-                    uiState.selectedTransport == ConnectionTransport.USB_OTG && usbDev != null && usbDev.hasPermission ->
-                        "USB READY" to MeshtasticGreen
-                    uiState.selectedTransport == ConnectionTransport.USB_OTG && usbDev != null && !usbDev.hasPermission ->
-                        "ALLOW USB" to AmberSignal
-                    uiState.selectedTransport == ConnectionTransport.USB_OTG ->
-                        "NO USB" to TextSecondary
-                    uiState.selectedBleNode != null ->
-                        "BLE READY" to MeshCoreCyan
-                    else ->
-                        "BLE MODE" to ecoColor
-                }
-
-                HardwareChipBadge(
-                    text = transportText,
-                    color = pillColor,
-                    modifier = Modifier.clickable { onStatusClick() }
-                )
-
-                if (uiState.loopbackTestBench && uiState.usbAttachedBoards.isEmpty()) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(AmberSignal.copy(alpha = 0.14f))
-                            .border(1.dp, AmberSignal.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(AmberSignal)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "DEMO",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = AmberSignal,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-        HorizontalDivider(color = SlateBorder.copy(alpha = 0.6f), thickness = 1.dp)
-    }
-}
-
-@Preview(name = "Mesh Installer App TopBar", showBackground = true, backgroundColor = 0xFF0B0F19)
-@Composable
-fun MeshInstallerTopBarPreview() {
-    MyApplicationTheme(darkTheme = true) {
-        MeshInstallerTopBar(
-            uiState = MeshInstallerUiState(),
-            ecoColor = com.example.ui.theme.MeshtasticGreen,
-            onOpenOffGridVault = {},
-            onStatusClick = {}
-        )
-    }
-}
-
-
-
