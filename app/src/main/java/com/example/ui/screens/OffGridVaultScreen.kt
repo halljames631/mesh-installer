@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,9 +23,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -51,23 +54,23 @@ import com.example.ui.theme.CardBorder
 import com.example.ui.theme.CardDarkBg
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberTeal
-import com.example.ui.theme.DarkTealBorder
 import com.example.ui.theme.DarkTealCard
 import com.example.ui.theme.DeepDarkBg
 import com.example.ui.theme.GreenSuccess
 import com.example.ui.theme.PurpleAccent
-import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VaultNavyBorder
 import com.example.ui.theme.VaultNavyHeader
 import java.util.Locale
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OffGridVaultScreen(
     uiState: MeshInstallerUiState,
     onSelectBoard: (HardwareBoard) -> Unit,
     onDownloadAllForSelected: () -> Unit,
+    onDownloadSingleBoard: (String) -> Unit = {},
     onUseSavedEntry: (CachedFirmwareEntry) -> Unit,
     onToggleMyDevice: (String) -> Unit,
     onClearVault: () -> Unit,
@@ -75,7 +78,6 @@ fun OffGridVaultScreen(
 ) {
     val savedCount = uiState.offlineVaultEntries.size
     val isDownloading = uiState.vaultBatchProgress.isDownloading
-    val totalSavedMb = uiState.offlineVaultEntries.sumOf { it.sizeBytes } / (1024f * 1024f)
 
     LazyColumn(
         modifier = modifier
@@ -131,7 +133,7 @@ fun OffGridVaultScreen(
                                 color = TextPrimary
                             )
                             Text(
-                                text = "MY DEVICES • 100% OFF-GRID READY",
+                                text = "MY DEVICES (${uiState.myDeviceIds.size}) • 100% OFF-GRID READY",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = BlueAccent,
@@ -177,7 +179,11 @@ fun OffGridVaultScreen(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "All saved firmwares available offline in the wilderness",
+                    text = if (isDownloading) {
+                        uiState.vaultBatchProgress.statusDetail.ifEmpty { "Downloading firmwares to local vault..." }
+                    } else {
+                        "All saved firmwares available offline in the wilderness"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF7EE787),
                     fontWeight = FontWeight.SemiBold
@@ -185,19 +191,24 @@ fun OffGridVaultScreen(
             }
         }
 
-        // Device Cards matching Image 4
+        // Device Cards matching Image 4 with live Meshtastic + MeshCore cached firmware badges
         items(BoardCatalog.allBoards, key = { it.id }) { board ->
             val cachedEntries = uiState.offlineVaultEntries.filter { it.boardId == board.id }
             val isCached = cachedEntries.isNotEmpty()
             val cachedBytes = cachedEntries.sumOf { it.sizeBytes }
             val cachedMb = cachedBytes / (1024f * 1024f)
+            val isInMyDevices = board.id in uiState.myDeviceIds
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
                     .background(CardDarkBg)
-                    .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                    .border(
+                        1.dp,
+                        if (isInMyDevices) CyberTeal.copy(alpha = 0.45f) else CardBorder,
+                        RoundedCornerShape(14.dp)
+                    )
                     .clickable { onSelectBoard(board) }
                     .padding(16.dp)
                     .testTag("vault_board_card_${board.id}")
@@ -208,28 +219,75 @@ fun OffGridVaultScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = board.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // My Device toggle checkbox pill
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(if (isInMyDevices) CyberTeal else Color(0xFF1C232D))
+                                    .border(1.dp, if (isInMyDevices) CyberCyan else CardBorder, RoundedCornerShape(5.dp))
+                                    .clickable { onToggleMyDevice(board.id) }
+                                    .testTag("vault_toggle_device_${board.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isInMyDevices) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected in My Devices",
+                                        tint = DeepDarkBg,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = board.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${board.mcu.name.replace('_', '-')} • ${board.flashSizeMb}MB Flash • ${board.pinoutSummary}",
+                            text = "${board.mcu.shortName} • ${board.flashSizeMb}MB Flash • ${board.loraChip}",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             maxLines = 1
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Badges Row
-                        Row(
+                        // Badges Row: Shows real cached firmware chips (tappable to load!) or default target badges
+                        FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // Primary Firmware Tag
-                            if (board.id == "lilygo_tdeck") {
+                            if (cachedEntries.isNotEmpty()) {
+                                cachedEntries.forEach { entry ->
+                                    val isMeshtasticEntry = entry.ecosystem == FirmwareEcosystem.MESHTASTIC
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isMeshtasticEntry) DarkTealCard else Color(0xFF1C232D))
+                                            .border(
+                                                1.dp,
+                                                if (isMeshtasticEntry) CyberTeal else BlueAccent,
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .clickable { onUseSavedEntry(entry) }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = "${entry.ecosystem.displayName} ${entry.variantLabel} (${entry.versionTag})",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isMeshtasticEntry) CyberCyan else BlueAccent
+                                        )
+                                    }
+                                }
+                            } else if (board.id == "lilygo_tdeck") {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
@@ -238,7 +296,7 @@ fun OffGridVaultScreen(
                                         .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "Meshtastic Alpha 2.8.1 (MUI)",
+                                        text = "Meshtastic MUI & BaseUI",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = CyberCyan
@@ -251,7 +309,7 @@ fun OffGridVaultScreen(
                                         .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "MeshCore Ripple",
+                                        text = "MeshCore Ripple & WadaMesh",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
                                         color = TextSecondary
@@ -266,7 +324,7 @@ fun OffGridVaultScreen(
                                         .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "Nordic UF2 / BLE DFU",
+                                        text = "Meshtastic (${board.meshtasticTarget}) • MeshCore (${board.meshCoreTarget})",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = PurpleAccent
@@ -281,7 +339,7 @@ fun OffGridVaultScreen(
                                         .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "Meshtastic Stable 2.5.4",
+                                        text = "Meshtastic (${board.meshtasticTarget}) • MeshCore (${board.meshCoreTarget})",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = BlueAccent
@@ -289,22 +347,43 @@ fun OffGridVaultScreen(
                                 }
                             }
 
-                            // Cached Badge
+                            // Cached / Download Badge
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(GreenSuccess.copy(alpha = 0.25f))
+                                    .clickable { onDownloadSingleBoard(board.id) }
                                     .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    .testTag("vault_download_board_${board.id}")
                             ) {
-                                Text(
-                                    text = if (isCached) "CACHED (%.1f MB)".format(Locale.US, cachedMb) else "READY FOR CACHE",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GreenSuccess
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    if (!isCached) {
+                                        Icon(
+                                            imageVector = Icons.Default.CloudDownload,
+                                            contentDescription = "Download board firmwares",
+                                            tint = GreenSuccess,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = if (isCached) {
+                                            "CACHED (%.1f MB)".format(Locale.US, cachedMb)
+                                        } else {
+                                            "SYNC BOARD"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GreenSuccess
+                                    )
+                                }
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     // Action chevron button
                     Box(

@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,8 +27,8 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DeveloperBoard
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -44,6 +46,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BleDiscoveredNode
@@ -71,11 +74,8 @@ import com.example.ui.theme.DarkTealHeader
 import com.example.ui.theme.DeepDarkBg
 import com.example.ui.theme.GreenSuccess
 import com.example.ui.theme.PurpleAccent
-import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import com.example.ui.theme.VaultNavyBorder
-import com.example.ui.theme.VaultNavyHeader
 import java.util.Locale
 
 @Composable
@@ -113,10 +113,11 @@ fun FlasherWorkbenchScreen(
     onResetFlashState: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isFlashing = uiState.flashProgress.phase != FlashPhase.IDLE && uiState.flashProgress.phase != FlashPhase.COMPLETED && uiState.flashProgress.phase != FlashPhase.FAILED
+    val isFlashing = uiState.flashProgress.phase != FlashPhase.IDLE &&
+        uiState.flashProgress.phase != FlashPhase.COMPLETED &&
+        uiState.flashProgress.phase != FlashPhase.FAILED
 
     if (isFlashing) {
-        // IMAGE 2: Flashing Progress View
         FlashingProgressView(
             uiState = uiState,
             expectedFileName = expectedFileName,
@@ -124,10 +125,10 @@ fun FlasherWorkbenchScreen(
             modifier = modifier
         )
     } else {
-        // IMAGE 1: Flasher Main View
         FlasherIdleView(
             uiState = uiState,
             expectedFileName = expectedFileName,
+            currentOfflineEntry = currentOfflineEntry,
             onSelectEcosystem = onSelectEcosystem,
             onSelectMeshtasticTrack = onSelectMeshtasticTrack,
             onSelectMeshCoreRole = onSelectMeshCoreRole,
@@ -135,23 +136,32 @@ fun FlasherWorkbenchScreen(
             onSelectTDeckMeshCoreFlavor = onSelectTDeckMeshCoreFlavor,
             onOpenBoardPicker = onOpenBoardPicker,
             onOpenReleasesPicker = onOpenReleasesPicker,
+            onSaveCurrentSelectionOffline = onSaveCurrentSelectionOffline,
+            onSelectTransport = onSelectTransport,
             onRequestUsbPermission = onRequestUsbPermission,
             onRescanUsb = onRescanUsb,
+            onStartBleScanWithPermissions = onStartBleScanWithPermissions,
+            onSelectBleNode = onSelectBleNode,
             onToggleFullErase = onToggleFullErase,
             onToggleBundleWebUi = onToggleBundleWebUi,
+            onImportCustomFile = onImportCustomFile,
+            onClearCustomFile = onClearCustomFile,
             onStartFlash = onStartFlash,
+            onResetFlashState = onResetFlashState,
             modifier = modifier
         )
     }
 }
 
 /**
- * Image 1: Main Flasher Interface
+ * Image 1: Main Flasher Interface with full Meshtastic & MeshCore Firmware Mapping
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FlasherIdleView(
     uiState: MeshInstallerUiState,
     expectedFileName: String,
+    currentOfflineEntry: CachedFirmwareEntry?,
     onSelectEcosystem: (FirmwareEcosystem) -> Unit,
     onSelectMeshtasticTrack: (MeshtasticTrack) -> Unit,
     onSelectMeshCoreRole: (MeshCoreRole) -> Unit,
@@ -159,16 +169,31 @@ private fun FlasherIdleView(
     onSelectTDeckMeshCoreFlavor: (TDeckMeshCoreFlavor) -> Unit,
     onOpenBoardPicker: () -> Unit,
     onOpenReleasesPicker: () -> Unit,
+    onSaveCurrentSelectionOffline: () -> Unit,
+    onSelectTransport: (ConnectionTransport) -> Unit,
     onRequestUsbPermission: (UsbAttachedBoard) -> Unit,
     onRescanUsb: () -> Unit,
+    onStartBleScanWithPermissions: () -> Unit,
+    onSelectBleNode: (BleDiscoveredNode) -> Unit,
     onToggleFullErase: (Boolean) -> Unit,
     onToggleBundleWebUi: (Boolean) -> Unit,
+    onImportCustomFile: () -> Unit,
+    onClearCustomFile: () -> Unit,
     onStartFlash: () -> Unit,
+    onResetFlashState: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val usbDev = uiState.usbAttachedBoards.firstOrNull()
     val isUsbAttached = usbDev != null
     val hasPermission = isUsbAttached && usbDev!!.hasPermission
+    val board = uiState.selectedBoard
+    val isTDeck = board.id == "lilygo_tdeck"
+    val isMeshtastic = uiState.selectedEcosystem == FirmwareEcosystem.MESHTASTIC
+
+    val alphaRelease = uiState.meshtasticReleases.firstOrNull { it.isPrerelease }
+    val stableRelease = uiState.meshtasticReleases.firstOrNull { !it.isPrerelease }
+    val alphaTag = alphaRelease?.tagName ?: "v2.6.0-alpha"
+    val stableTag = stableRelease?.tagName ?: "v2.5.18"
 
     LazyColumn(
         modifier = modifier
@@ -224,35 +249,105 @@ private fun FlasherIdleView(
                                 color = TextPrimary
                             )
                             Text(
-                                text = if (hasPermission) "USB OTG CONNECTED • 921.6K" else if (isUsbAttached) "TAP TO ALLOW USB" else "READY FOR USB OTG",
+                                text = when {
+                                    uiState.selectedTransport == ConnectionTransport.BLE_DFU ->
+                                        "BLE OTA DFU • ${uiState.selectedBleNode?.name ?: "READY TO SCAN"}"
+                                    hasPermission ->
+                                        "USB OTG CONNECTED • ${uiState.selectedBaudRate / 1000}K"
+                                    isUsbAttached ->
+                                        "TAP TO ALLOW USB"
+                                    uiState.loopbackTestBench ->
+                                        "TEST BENCH READY • ${uiState.selectedBaudRate / 1000}K"
+                                    else ->
+                                        "READY FOR USB OTG"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (hasPermission) Color(0xFF7EE787) else AmberSignal,
+                                color = if (hasPermission || uiState.loopbackTestBench) Color(0xFF7EE787) else AmberSignal,
                                 letterSpacing = 0.5.sp
                             )
                         }
                     }
 
-                    // Online Badge
+                    // Online / Scan Badge
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(11.dp))
                             .background(CyberTeal.copy(alpha = 0.15f))
                             .clickable {
-                                if (isUsbAttached && !hasPermission) {
+                                if (uiState.selectedTransport == ConnectionTransport.BLE_DFU) {
+                                    onStartBleScanWithPermissions()
+                                } else if (isUsbAttached && !hasPermission) {
                                     onRequestUsbPermission(usbDev!!)
                                 } else {
                                     onRescanUsb()
                                 }
                             }
                             .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .testTag("usb_status_action_pill")
                     ) {
                         Text(
-                            text = if (hasPermission) "ONLINE" else if (isUsbAttached) "GRANT USB" else "SCAN",
+                            text = when {
+                                uiState.selectedTransport == ConnectionTransport.BLE_DFU ->
+                                    if (uiState.isBleScanning) "SCANNING" else "BLE SCAN"
+                                hasPermission -> "ONLINE"
+                                isUsbAttached -> "GRANT USB"
+                                else -> "ONLINE"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = CyberCyan
                         )
+                    }
+                }
+            }
+        }
+
+        // Flash Completion or Failure Banner (if just finished)
+        if (uiState.flashProgress.phase == FlashPhase.COMPLETED || uiState.flashProgress.phase == FlashPhase.FAILED) {
+            item {
+                val isSuccess = uiState.flashProgress.phase == FlashPhase.COMPLETED
+                val accentColor = if (isSuccess) GreenSuccess else CoralRed
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(accentColor.copy(alpha = 0.14f))
+                        .border(1.dp, accentColor.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isSuccess) "Flash Completed Successfully" else "Flash Operation Failed",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor
+                            )
+                            Text(
+                                text = uiState.flashProgress.errorMessage ?: uiState.flashProgress.phase.title,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextPrimary
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CardDarkBg)
+                                .clickable { onResetFlashState() }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "DISMISS",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                        }
                     }
                 }
             }
@@ -270,88 +365,187 @@ private fun FlasherIdleView(
                     .padding(16.dp)
                     .testTag("connected_hardware_card")
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "CONNECTED HARDWARE",
-                                style = TextStyle(
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.8.sp,
-                                    color = Color(0xFF8B949E)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "CONNECTED HARDWARE",
+                                    style = TextStyle(
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.8.sp,
+                                        color = Color(0xFF8B949E)
+                                    )
                                 )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(GreenSuccess.copy(alpha = 0.25f))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = board.mcu.shortName,
+                                        style = TextStyle(
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = GreenSuccess
+                                        )
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = board.name,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "ROM: ${board.mcu.shortName} • ${board.flashSizeMb}MB Quad-SPI Flash • ${board.loraChip}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val portText = if (usbDev != null) {
+                                "Port: ${usbDev.deviceName} (Vendor: 0x%04X)".format(usbDev.vendorId)
+                            } else {
+                                "Port: /dev/bus/usb/001/002 (Vendor: 0x%04X • ${board.usbBridge})".format(board.vendorId)
+                            }
+                            Text(
+                                text = portText,
+                                style = TextStyle(
+                                    fontSize = 11.sp,
+                                    color = BlueAccent
+                                )
+                            )
+                        }
+
+                        // Green Active Pulse Indicator
+                        Box(
+                            modifier = Modifier.size(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .border(1.5.dp, GreenSuccess.copy(alpha = 0.4f), CircleShape)
                             )
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(GreenSuccess.copy(alpha = 0.25f))
-                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(GreenSuccess)
+                            )
+                        }
+                    }
+
+                    // Quick Hardware & Transport Selector Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF1C232D))
+                                .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
+                                .clickable { onOpenBoardPicker() }
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                .testTag("change_radio_button")
+                        ) {
+                            Text(
+                                text = "Change Radio (${board.manufacturer}) ▾",
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = CyberCyan
+                                )
+                            )
+                        }
+
+                        if (board.mcu.supportsBleDfu) {
+                            val isBle = uiState.selectedTransport == ConnectionTransport.BLE_DFU
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isBle) PurpleAccent.copy(alpha = 0.2f) else Color(0xFF1C232D))
+                                    .border(
+                                        1.dp,
+                                        if (isBle) PurpleAccent else Color(0xFF2D3748),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable {
+                                        onSelectTransport(
+                                            if (isBle) ConnectionTransport.USB_OTG else ConnectionTransport.BLE_DFU
+                                        )
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    .testTag("toggle_transport_button")
                             ) {
                                 Text(
-                                    text = uiState.selectedBoard.mcu.name.replace('_', '-'),
+                                    text = if (isBle) "Mode: BLE OTA DFU" else "Switch to BLE DFU",
                                     style = TextStyle(
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = GreenSuccess
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isBle) PurpleAccent else TextSecondary
                                     )
                                 )
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = uiState.selectedBoard.name,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "ROM: ${uiState.selectedBoard.mcu.name.replace('_', '-')} • ${uiState.selectedBoard.flashSizeMb}MB Quad-SPI Flash",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Port: /dev/bus/usb/001/002 (Vendor: 0x303A)",
-                            style = TextStyle(
-                                fontSize = 11.sp,
-                                color = BlueAccent
-                            )
-                        )
                     }
 
-                    // Green Active Pulse Indicator
-                    Box(
-                        modifier = Modifier.size(24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .border(1.5.dp, GreenSuccess.copy(alpha = 0.4f), CircleShape)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(GreenSuccess)
-                        )
+                    // If BLE DFU transport is active, show discovered BLE nodes
+                    if (uiState.selectedTransport == ConnectionTransport.BLE_DFU && uiState.bleDiscoveredNodes.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            uiState.bleDiscoveredNodes.take(3).forEach { node ->
+                                val isSelected = uiState.selectedBleNode?.address == node.address
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSelected) DarkTealCard else Color(0xFF11161D))
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) CyberTeal else CardBorder,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { onSelectBleNode(node) }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "${node.name} (${node.address})",
+                                            style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        )
+                                        Text(
+                                            text = "${node.rssi} dBm",
+                                            style = TextStyle(fontSize = 10.sp, color = CyberCyan)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Card 2: FIRMWARE CONFIGURATION matching Image 1
+        // Card 2: FIRMWARE CONFIGURATION matching Image 1 with full Meshtastic & MeshCore mapping
         item {
             Box(
                 modifier = Modifier
@@ -363,22 +557,76 @@ private fun FlasherIdleView(
                     .testTag("firmware_configuration_card")
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(
-                        text = "FIRMWARE CONFIGURATION",
-                        style = TextStyle(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                            color = Color(0xFF8B949E)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "FIRMWARE CONFIGURATION",
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.8.sp,
+                                color = Color(0xFF8B949E)
+                            )
                         )
-                    )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF1C232D))
+                                    .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
+                                    .clickable { onOpenReleasesPicker() }
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .testTag("open_releases_picker_button")
+                            ) {
+                                Text(
+                                    text = "Versions (${uiState.selectedRelease?.tagName ?: "Latest"}) ▾",
+                                    style = TextStyle(
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = BlueAccent
+                                    )
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF1C232D))
+                                    .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
+                                    .clickable { onImportCustomFile() }
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .testTag("import_custom_firmware_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FolderOpen,
+                                        contentDescription = "Import Local File",
+                                        tint = CyberCyan,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Text(
+                                        text = "Local File",
+                                        style = TextStyle(
+                                            fontSize = 9.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = CyberCyan
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // Ecosystem Pills (Meshtastic vs MeshCore)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        val isMeshtastic = uiState.selectedEcosystem == FirmwareEcosystem.MESHTASTIC
                         // Meshtastic Pill
                         Box(
                             modifier = Modifier
@@ -391,7 +639,8 @@ private fun FlasherIdleView(
                                     if (isMeshtastic) CyberTeal else Color(0xFF2D3748),
                                     RoundedCornerShape(8.dp)
                                 )
-                                .clickable { onSelectEcosystem(FirmwareEcosystem.MESHTASTIC) },
+                                .clickable { onSelectEcosystem(FirmwareEcosystem.MESHTASTIC) }
+                                .testTag("ecosystem_meshtastic_pill"),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -414,7 +663,8 @@ private fun FlasherIdleView(
                                     if (!isMeshtastic) CyberTeal else Color(0xFF2D3748),
                                     RoundedCornerShape(8.dp)
                                 )
-                                .clickable { onSelectEcosystem(FirmwareEcosystem.MESHCORE) },
+                                .clickable { onSelectEcosystem(FirmwareEcosystem.MESHCORE) }
+                                .testTag("ecosystem_meshcore_pill"),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -426,150 +676,352 @@ private fun FlasherIdleView(
                         }
                     }
 
-                    // Release Track Selector
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Release Track",
-                            style = TextStyle(
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFC9D1D9)
-                            )
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            val isAlpha = uiState.selectedMeshtasticTrack == MeshtasticTrack.ALPHA
-                            // Alpha
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(34.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isAlpha) Color(0xFF1C232D) else Color(0xFF161B22))
-                                    .border(
-                                        1.5.dp,
-                                        if (isAlpha) CyberTeal else CardBorder,
-                                        RoundedCornerShape(6.dp)
-                                    )
-                                    .clickable { onSelectMeshtasticTrack(MeshtasticTrack.ALPHA) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Alpha (v2.8.1)",
-                                    style = TextStyle(
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isAlpha) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isAlpha) Color.White else TextSecondary
-                                    )
+                    if (isMeshtastic) {
+                        // ================= MESHTASTIC MAPPING =================
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Release Track",
+                                style = TextStyle(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFC9D1D9)
                                 )
-                            }
-
-                            // Stable
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(34.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (!isAlpha) Color(0xFF1C232D) else Color(0xFF161B22))
-                                    .border(
-                                        1.5.dp,
-                                        if (!isAlpha) CyberTeal else CardBorder,
-                                        RoundedCornerShape(6.dp)
-                                    )
-                                    .clickable { onSelectMeshtasticTrack(MeshtasticTrack.STABLE) },
-                                contentAlignment = Alignment.Center
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text(
-                                    text = "Stable (v2.5.4)",
-                                    style = TextStyle(
-                                        fontSize = 11.sp,
-                                        fontWeight = if (!isAlpha) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (!isAlpha) Color.White else TextSecondary
+                                val isAlpha = uiState.selectedMeshtasticTrack == MeshtasticTrack.ALPHA
+                                val isStable = uiState.selectedMeshtasticTrack == MeshtasticTrack.STABLE
+                                // Alpha
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isAlpha) Color(0xFF1C232D) else Color(0xFF161B22))
+                                        .border(
+                                            1.5.dp,
+                                            if (isAlpha) CyberTeal else CardBorder,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { onSelectMeshtasticTrack(MeshtasticTrack.ALPHA) }
+                                        .testTag("track_alpha_button"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Alpha ($alphaTag)",
+                                        style = TextStyle(
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isAlpha) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isAlpha) Color.White else TextSecondary
+                                        )
                                     )
+                                }
+
+                                // Stable
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isStable) Color(0xFF1C232D) else Color(0xFF161B22))
+                                        .border(
+                                            1.5.dp,
+                                            if (isStable) CyberTeal else CardBorder,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { onSelectMeshtasticTrack(MeshtasticTrack.STABLE) }
+                                        .testTag("track_stable_button"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Stable ($stableTag)",
+                                        style = TextStyle(
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isStable) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isStable) Color.White else TextSecondary
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        // Variant Selector (T-Deck MUI vs BaseUI, or standard Board Target)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = if (isTDeck) "LilyGO T-Deck Variant" else "${board.name} Firmware Target",
+                                style = TextStyle(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFC9D1D9)
+                                )
+                            )
+
+                            if (isTDeck) {
+                                // Option 1: Meshtastic UI (MUI Touch)
+                                VariantRadioCard(
+                                    title = "Meshtastic UI (MUI Touch)",
+                                    subtitle = if (uiState.tDeckMeshtasticMui) expectedFileName else "t-deck-tft • Graphical Touch UI & Maps",
+                                    selected = uiState.tDeckMeshtasticMui,
+                                    onClick = { onSetTDeckMeshtasticMui(true) },
+                                    testTag = "tdeck_mui_option"
+                                )
+
+                                // Option 2: Classic BaseUI (Terminal)
+                                VariantRadioCard(
+                                    title = "Classic BaseUI (Terminal)",
+                                    subtitle = if (!uiState.tDeckMeshtasticMui) expectedFileName else "t-deck • Classic OLED/TFT Screen UI",
+                                    selected = !uiState.tDeckMeshtasticMui,
+                                    onClick = { onSetTDeckMeshtasticMui(false) },
+                                    testTag = "tdeck_baseui_option"
+                                )
+                            } else {
+                                VariantRadioCard(
+                                    title = "${board.name} (${board.meshtasticTarget})",
+                                    subtitle = expectedFileName,
+                                    selected = true,
+                                    onClick = { onOpenReleasesPicker() },
+                                    testTag = "board_meshtastic_target_card"
                                 )
                             }
                         }
+                    } else {
+                        // ================= MESHCORE MAPPING =================
+                        if (isTDeck) {
+                            // T-Deck MeshCore Flavor Selector (Ripple Ultra UI vs WadaMesh)
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "T-Deck MeshCore Flavor",
+                                    style = TextStyle(
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFC9D1D9)
+                                    )
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    TDeckMeshCoreFlavor.entries.forEach { flavor ->
+                                        val isSelected = uiState.tDeckMeshCoreFlavor == flavor
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(34.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (isSelected) Color(0xFF1C232D) else Color(0xFF161B22))
+                                                .border(
+                                                    1.5.dp,
+                                                    if (isSelected) CyberTeal else CardBorder,
+                                                    RoundedCornerShape(6.dp)
+                                                )
+                                                .clickable { onSelectTDeckMeshCoreFlavor(flavor) }
+                                                .testTag("tdeck_meshcore_flavor_${flavor.name.lowercase()}"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = flavor.label,
+                                                style = TextStyle(
+                                                    fontSize = 11.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (isSelected) Color.White else TextSecondary
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // MeshCore Node Role Selector (for all boards, including T-Deck role override)
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "MeshCore Node Role",
+                                style = TextStyle(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFC9D1D9)
+                                )
+                            )
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val roles = listOf(
+                                    MeshCoreRole.COMPANION_BLE,
+                                    MeshCoreRole.COMPANION_USB,
+                                    MeshCoreRole.REPEATER,
+                                    MeshCoreRole.ROOM_SERVER
+                                )
+                                roles.forEach { role ->
+                                    val isRoleSelected = uiState.selectedMeshCoreRole == role
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isRoleSelected) Color(0xFF1C232D) else Color(0xFF161B22))
+                                            .border(
+                                                1.5.dp,
+                                                if (isRoleSelected) CyberTeal else CardBorder,
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .clickable { onSelectMeshCoreRole(role) }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                                            .testTag("meshcore_role_${role.name.lowercase()}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = role.label,
+                                            style = TextStyle(
+                                                fontSize = 10.5.sp,
+                                                fontWeight = if (isRoleSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isRoleSelected) Color.White else TextSecondary
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Active MeshCore Target Binary Card
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = if (isTDeck) "LilyGO T-Deck MeshCore Target" else "${board.name} MeshCore Target",
+                                style = TextStyle(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFC9D1D9)
+                                )
+                            )
+                            VariantRadioCard(
+                                title = if (isTDeck) {
+                                    "${uiState.tDeckMeshCoreFlavor.label} • ${uiState.selectedMeshCoreRole.label}"
+                                } else {
+                                    "${board.name} • ${uiState.selectedMeshCoreRole.label}"
+                                },
+                                subtitle = expectedFileName,
+                                selected = true,
+                                onClick = { onOpenReleasesPicker() },
+                                testTag = "meshcore_target_card"
+                            )
+                        }
                     }
 
-                    // LilyGO T-Deck Variant Selector
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = if (uiState.selectedBoard.id == "lilygo_tdeck") "LilyGO T-Deck Variant" else "${uiState.selectedBoard.name} Variant",
-                            style = TextStyle(
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFC9D1D9)
-                            )
-                        )
-
-                        // Variant Card with Radio Dot
+                    // Custom Local Firmware File Banner (when imported or loaded from Off-Grid Vault)
+                    uiState.customFirmwareFile?.let { customFile ->
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(DarkTealCard)
-                                .border(1.2.dp, CyberTeal, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (uiState.selectedBoard.id == "lilygo_tdeck") {
-                                        onSetTDeckMeshtasticMui(!uiState.tDeckMeshtasticMui)
-                                    } else {
-                                        onOpenReleasesPicker()
-                                    }
-                                }
-                                .padding(12.dp)
+                                .background(Color(0xFF162230))
+                                .border(1.dp, BlueAccent, RoundedCornerShape(8.dp))
+                                .padding(10.dp)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Radio circle
-                                Box(
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .clip(CircleShape)
-                                        .background(CyberTeal),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(DeepDarkBg)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "LOCAL BINARY: ${customFile.displayName}",
+                                        style = TextStyle(
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = CyberCyan
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${customFile.sizeBytes / 1024} KB • ${customFile.format} • SHA256: ${customFile.sha256Hex.take(12)}...",
+                                        style = TextStyle(
+                                            fontSize = 9.5.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = TextSecondary
+                                        )
                                     )
                                 }
-
-                                Column {
-                                    Text(
-                                        text = if (uiState.selectedBoard.id == "lilygo_tdeck") {
-                                            if (uiState.tDeckMeshtasticMui) "Meshtastic UI (MUI Touch)" else "Classic BaseUI (Terminal)"
-                                        } else {
-                                            uiState.selectedBoard.name
-                                        },
-                                        style = TextStyle(
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                    )
-                                    Text(
-                                        text = expectedFileName,
-                                        style = TextStyle(
-                                            fontSize = 10.sp,
-                                            color = Color(0xFF7EE787),
-                                            fontFamily = FontFamily.Monospace
-                                        )
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(CoralRed.copy(alpha = 0.2f))
+                                        .clickable { onClearCustomFile() },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear Local Firmware",
+                                        tint = CoralRed,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    // Offline Vault Quick Action Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val isSavedOffline = currentOfflineEntry != null
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isSavedOffline) Icons.Default.CheckCircle else Icons.Default.CloudDownload,
+                                contentDescription = null,
+                                tint = if (isSavedOffline) GreenSuccess else TextSecondary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (isSavedOffline) {
+                                    "Cached in Vault (${currentOfflineEntry!!.sizeBytes / 1024} KB)"
+                                } else {
+                                    "Target: $expectedFileName"
+                                },
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    color = if (isSavedOffline) GreenSuccess else TextSecondary
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSavedOffline) GreenSuccess.copy(alpha = 0.15f) else Color(0xFF1C232D))
+                                .border(
+                                    1.dp,
+                                    if (isSavedOffline) GreenSuccess.copy(alpha = 0.5f) else Color(0xFF2D3748),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable { onSaveCurrentSelectionOffline() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("save_current_offline_button")
+                        ) {
+                            Text(
+                                text = if (isSavedOffline) "SAVED OFFLINE ✓" else "SAVE TO VAULT",
+                                style = TextStyle(
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSavedOffline) GreenSuccess else CyberCyan
+                                )
+                            )
                         }
                     }
                 }
             }
         }
 
-        // Card 3: Action Button matching Image 1
+        // Card 3: Action Button (with baud rate removed as requested)
         item {
             Button(
                 onClick = onStartFlash,
@@ -594,7 +1046,7 @@ private fun FlasherIdleView(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "⚡ FLASH FIRMWARE (921,600 BAUD)",
+                        text = "⚡ FLASH FIRMWARE",
                         style = TextStyle(
                             fontSize = 14.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -621,7 +1073,8 @@ private fun FlasherIdleView(
                         .background(CardDarkBg)
                         .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
                         .clickable { onToggleFullErase(!uiState.fullFlashErase) }
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp)
+                        .testTag("toggle_erase_flash_button"),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -643,7 +1096,8 @@ private fun FlasherIdleView(
                         .background(CardDarkBg)
                         .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
                         .clickable { onToggleBundleWebUi(!uiState.bundleWebUiPartition) }
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp)
+                        .testTag("toggle_backup_config_button"),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -723,6 +1177,70 @@ private fun FlasherIdleView(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VariantRadioCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) DarkTealCard else Color(0xFF161B22))
+            .border(
+                width = if (selected) 1.2.dp else 1.dp,
+                color = if (selected) CyberTeal else CardBorder,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable { onClick() }
+            .padding(12.dp)
+            .testTag(testTag)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Radio circle
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) CyberTeal else Color(0xFF30363D)),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(DeepDarkBg)
+                )
+            }
+
+            Column {
+                Text(
+                    text = title,
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) Color.White else TextSecondary
+                    )
+                )
+                Text(
+                    text = subtitle,
+                    style = TextStyle(
+                        fontSize = 10.sp,
+                        color = if (selected) Color(0xFF7EE787) else TextSecondary,
+                        fontFamily = FontFamily.Monospace
+                    )
+                )
             }
         }
     }

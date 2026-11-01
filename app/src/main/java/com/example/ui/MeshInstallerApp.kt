@@ -291,6 +291,7 @@ fun MeshInstallerApp(
                                 currentTab = InstallerTab.FLASHER
                             },
                             onDownloadAllForSelected = viewModel::downloadAllFirmwareForMyDevices,
+                            onDownloadSingleBoard = viewModel::downloadSingleBoardFirmware,
                             onUseSavedEntry = { entry ->
                                 viewModel.useSavedVaultEntryAsLocalFile(entry)
                                 currentTab = InstallerTab.FLASHER
