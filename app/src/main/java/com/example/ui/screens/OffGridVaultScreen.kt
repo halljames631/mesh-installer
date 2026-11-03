@@ -1,7 +1,7 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,15 +31,17 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -50,18 +53,8 @@ import com.example.model.FirmwareEcosystem
 import com.example.model.HardwareBoard
 import com.example.ui.MeshInstallerUiState
 import com.example.ui.theme.BlueAccent
-import com.example.ui.theme.CardBorder
-import com.example.ui.theme.CardDarkBg
-import com.example.ui.theme.CyberCyan
-import com.example.ui.theme.CyberTeal
-import com.example.ui.theme.DarkTealCard
-import com.example.ui.theme.DeepDarkBg
 import com.example.ui.theme.GreenSuccess
 import com.example.ui.theme.PurpleAccent
-import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
-import com.example.ui.theme.VaultNavyBorder
-import com.example.ui.theme.VaultNavyHeader
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -82,27 +75,25 @@ fun OffGridVaultScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(DeepDarkBg)
+            .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Top Card matching Image 4
+        // Top Header Card
         item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(VaultNavyHeader, Color(0xFF1C354D))
-                        )
-                    )
-                    .border(1.dp, VaultNavyBorder, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -110,19 +101,19 @@ fun OffGridVaultScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(BlueAccent.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
+                        Surface(
+                            modifier = Modifier.size(40.dp),
+                            shape = CircleShape,
+                            color = BlueAccent.copy(alpha = 0.15f)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = "Offline Vault",
-                                tint = BlueAccent,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Offline Vault",
+                                    tint = BlueAccent,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
@@ -130,7 +121,7 @@ fun OffGridVaultScreen(
                                 text = "Offline Vault",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = TextPrimary
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "MY DEVICES (${uiState.myDeviceIds.size}) • 100% OFF-GRID READY",
@@ -142,15 +133,13 @@ fun OffGridVaultScreen(
                         }
                     }
 
-                    // Count Badge Pill
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(GreenSuccess.copy(alpha = 0.2f))
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = GreenSuccess.copy(alpha = 0.15f)
                     ) {
                         Text(
                             text = if (savedCount > 0) "$savedCount READY" else "VAULT READY",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = GreenSuccess
@@ -160,38 +149,40 @@ fun OffGridVaultScreen(
             }
         }
 
-        // Info Banner matching Image 4
+        // Info Banner
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(DarkTealCard)
-                    .border(1.dp, CyberTeal.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
             ) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = CyberCyan,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = if (isDownloading) {
-                        uiState.vaultBatchProgress.statusDetail.ifEmpty { "Downloading firmwares to local vault..." }
-                    } else {
-                        "All saved firmwares available offline in the wilderness"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF7EE787),
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = if (isDownloading) {
+                            uiState.vaultBatchProgress.statusDetail.ifEmpty { "Downloading firmwares to local vault..." }
+                        } else {
+                            "All saved firmwares available offline in the wilderness"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
 
-        // Device Cards matching Image 4 with live Meshtastic + MeshCore cached firmware badges
+        // Device Cards
         items(BoardCatalog.allBoards, key = { it.id }) { board ->
             val cachedEntries = uiState.offlineVaultEntries.filter { it.boardId == board.id }
             val isCached = cachedEntries.isNotEmpty()
@@ -199,22 +190,23 @@ fun OffGridVaultScreen(
             val cachedMb = cachedBytes / (1024f * 1024f)
             val isInMyDevices = board.id in uiState.myDeviceIds
 
-            Box(
+            OutlinedCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CardDarkBg)
-                    .border(
-                        1.dp,
-                        if (isInMyDevices) CyberTeal.copy(alpha = 0.45f) else CardBorder,
-                        RoundedCornerShape(14.dp)
-                    )
-                    .clickable { onSelectBoard(board) }
-                    .padding(16.dp)
-                    .testTag("vault_board_card_${board.id}")
+                    .testTag("vault_board_card_${board.id}"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    if (isInMyDevices) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant
+                )
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -223,149 +215,126 @@ fun OffGridVaultScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // My Device toggle checkbox pill
-                            Box(
+                            // My Device toggle checkbox (48dp min touch target)
+                            Surface(
                                 modifier = Modifier
-                                    .size(20.dp)
-                                    .clip(RoundedCornerShape(5.dp))
-                                    .background(if (isInMyDevices) CyberTeal else Color(0xFF1C232D))
-                                    .border(1.dp, if (isInMyDevices) CyberCyan else CardBorder, RoundedCornerShape(5.dp))
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { onToggleMyDevice(board.id) }
                                     .testTag("vault_toggle_device_${board.id}"),
-                                contentAlignment = Alignment.Center
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isInMyDevices) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isInMyDevices) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                )
                             ) {
-                                if (isInMyDevices) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Selected in My Devices",
-                                        tint = DeepDarkBg,
-                                        modifier = Modifier.size(14.dp)
-                                    )
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (isInMyDevices) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "Selected in My Devices",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
-                            Text(
-                                text = board.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onSelectBoard(board) }
+                            ) {
+                                Text(
+                                    text = board.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${board.mcu.shortName} • ${board.flashSizeMb}MB Flash • ${board.loraChip}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "${board.mcu.shortName} • ${board.flashSizeMb}MB Flash • ${board.loraChip}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            maxLines = 1
-                        )
+
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Badges Row: Shows real cached firmware chips (tappable to load!) or default target badges
+                        // Badges Row
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             if (cachedEntries.isNotEmpty()) {
                                 cachedEntries.forEach { entry ->
                                     val isMeshtasticEntry = entry.ecosystem == FirmwareEcosystem.MESHTASTIC
-                                    Box(
+                                    Surface(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (isMeshtasticEntry) DarkTealCard else Color(0xFF1C232D))
-                                            .border(
-                                                1.dp,
-                                                if (isMeshtasticEntry) CyberTeal else BlueAccent,
-                                                RoundedCornerShape(6.dp)
-                                            )
-                                            .clickable { onUseSavedEntry(entry) }
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { onUseSavedEntry(entry) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isMeshtasticEntry) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isMeshtasticEntry) MaterialTheme.colorScheme.primary else BlueAccent
+                                        )
                                     ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                            Text(
+                                                text = "${entry.ecosystem.displayName} ${entry.variantLabel} (${entry.versionTag})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isMeshtasticEntry) MaterialTheme.colorScheme.onPrimaryContainer else BlueAccent
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    modifier = Modifier
+                                        .defaultMinSize(minHeight = 48.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                                         Text(
-                                            text = "${entry.ecosystem.displayName} ${entry.variantLabel} (${entry.versionTag})",
+                                            text = "Meshtastic & MeshCore",
                                             style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isMeshtasticEntry) CyberCyan else BlueAccent
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
-                            } else if (board.id == "lilygo_tdeck") {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(DarkTealCard)
-                                        .border(1.dp, CyberTeal, RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = "Meshtastic MUI & BaseUI",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = CyberCyan
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF1F2833))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = "MeshCore Ripple & WadaMesh",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = TextSecondary
-                                    )
-                                }
-                            } else if (board.mcu.name.startsWith("NRF52")) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF1C232D))
-                                        .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = "Meshtastic (${board.meshtasticTarget}) • MeshCore (${board.meshCoreTarget})",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PurpleAccent
-                                    )
-                                }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF1C232D))
-                                        .border(1.dp, Color(0xFF2D3748), RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = "Meshtastic (${board.meshtasticTarget}) • MeshCore (${board.meshCoreTarget})",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BlueAccent
-                                    )
-                                }
                             }
 
-                            // Cached / Download Badge
-                            Box(
+                            // Sync / Cached Badge (48dp min touch target)
+                            Surface(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(GreenSuccess.copy(alpha = 0.25f))
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { onDownloadSingleBoard(board.id) }
-                                    .padding(horizontal = 6.dp, vertical = 3.dp)
-                                    .testTag("vault_download_board_${board.id}")
+                                    .testTag("vault_download_board_${board.id}"),
+                                shape = RoundedCornerShape(8.dp),
+                                color = GreenSuccess.copy(alpha = 0.15f),
+                                border = BorderStroke(1.dp, GreenSuccess.copy(alpha = 0.5f))
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                                 ) {
                                     if (!isCached) {
                                         Icon(
                                             imageVector = Icons.Default.CloudDownload,
                                             contentDescription = "Download board firmwares",
                                             tint = GreenSuccess,
-                                            modifier = Modifier.size(11.dp)
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                     Text(
@@ -385,22 +354,22 @@ fun OffGridVaultScreen(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Action chevron button
-                    Box(
+                    Surface(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (board.id == "lilygo_tdeck") CyberTeal.copy(alpha = 0.15f) else BlueAccent.copy(alpha = 0.15f)
-                            ),
-                        contentAlignment = Alignment.Center
+                            .clickable { onSelectBoard(board) },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Select ${board.name}",
-                            tint = if (board.id == "lilygo_tdeck") CyberCyan else BlueAccent,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Select ${board.name}",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -408,15 +377,14 @@ fun OffGridVaultScreen(
 
         // Bottom Action Button: SYNC & UPDATE ALL FIRMWARES
         item {
-            Spacer(modifier = Modifier.height(6.dp))
             Button(
                 onClick = onDownloadAllForSelected,
                 enabled = !isDownloading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(56.dp)
                     .testTag("vault_sync_all_button"),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = BlueAccent,
                     contentColor = Color.White
@@ -432,19 +400,19 @@ fun OffGridVaultScreen(
                     Text(
                         text = "DOWNLOADING... (${uiState.vaultBatchProgress.currentIndex}/${uiState.vaultBatchProgress.totalCount})",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 13.sp
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Default.Sync,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "SYNC & UPDATE ALL FIRMWARES",
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
                 }

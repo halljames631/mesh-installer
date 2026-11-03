@@ -71,7 +71,7 @@ data class MeshInstallerUiState(
     val consoleLogs: List<ConsoleLogEntry> = emptyList(),
     // Off-Grid Firmware Vault & My Devices state
     val showOffGridSetupDialog: Boolean = false,
-    val myDeviceIds: Set<String> = OfflineFirmwareVaultManager.DEFAULT_POPULAR_DEVICE_IDS,
+    val myDeviceIds: Set<String> = setOf("heltec_v4"),
     val offlineVaultEntries: List<CachedFirmwareEntry> = emptyList(),
     val vaultBatchProgress: VaultBatchProgress = VaultBatchProgress()
 )
@@ -96,7 +96,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
             meshtasticReleases = repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC),
             meshCoreReleases = repository.curatedFallbackReleases(FirmwareEcosystem.MESHCORE),
             selectedRelease = repository.curatedFallbackReleases(FirmwareEcosystem.MESHTASTIC).first(),
-            showOffGridSetupDialog = !vaultManager.hasCompletedOnboarding(),
+            showOffGridSetupDialog = false,
             myDeviceIds = initialMyDevices
         )
     )

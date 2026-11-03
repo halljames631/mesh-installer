@@ -2,52 +2,92 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// RF Hardware Workbench Dark Palette
-val ObsidianBg = Color(0xFF080E16)
-val SlateSurface = Color(0xFF0E1824)
-val SlateCard = Color(0xFF142232)
-val SlateElevated = Color(0xFF1B2D42)
-val SlateBorder = Color(0xFF263E58)
+// ==========================================
+// Modern Material 3 Neutral Palette (Dark)
+// ==========================================
+val DarkBackground = Color(0xFF0B1017)
+val DarkSurface = Color(0xFF111722)
+val DarkSurfaceContainerLow = Color(0xFF0F151F)
+val DarkSurfaceContainer = Color(0xFF161F2C)
+val DarkSurfaceContainerHigh = Color(0xFF1E293A)
+val DarkSurfaceContainerHighest = Color(0xFF263449)
+val DarkOutline = Color(0xFF2D3C52)
+val DarkOutlineVariant = Color(0xFF1D2837)
+val DarkTextPrimary = Color(0xFFF1F5F9)
+val DarkTextSecondary = Color(0xFF94A3B8)
+val DarkTextMuted = Color(0xFF64748B)
 
-// Ecosystem Accent Colors
-val MeshtasticGreen = Color(0xFF00E676)
-val MeshtasticGreenDim = Color(0xFF004D28)
-val MeshCoreCyan = Color(0xFF00B0FF)
-val MeshCoreCyanDim = Color(0xFF003D5B)
+// ==========================================
+// Modern Material 3 Neutral Palette (Light)
+// ==========================================
+val LightBackground = Color(0xFFF8FAFC)
+val LightSurface = Color(0xFFFFFFFF)
+val LightSurfaceContainerLow = Color(0xFFFFFFFF)
+val LightSurfaceContainer = Color(0xFFF1F5F9)
+val LightSurfaceContainerHigh = Color(0xFFE2E8F0)
+val LightSurfaceContainerHighest = Color(0xFFCBD5E1)
+val LightOutline = Color(0xFF94A3B8)
+val LightOutlineVariant = Color(0xFFE2E8F0)
+val LightTextPrimary = Color(0xFF0F172A)
+val LightTextSecondary = Color(0xFF475569)
+val LightTextMuted = Color(0xFF94A3B8)
 
-// Telemetry & Status Accents
-val AmberSignal = Color(0xFFFFB300)
-val CoralError = Color(0xFFFF5252)
-val VioletNrf = Color(0xFFB388FF)
-val EspOrange = Color(0xFFFF6E40)
+// ==========================================
+// Dynamic Accent Colors (Meshtastic & MeshCore)
+// ==========================================
+val CyberTeal = Color(0xFF00E5BD)
+val CyberTealDark = Color(0xFF00A88B)
+val CyberTealContainer = Color(0xFF00382E)
+val CyberTealOnContainer = Color(0xFFA7F3D0)
 
-// Text Hierarchy
-val TextPrimary = Color(0xFFEAF4FC)
-val TextSecondary = Color(0xFF94AFC9)
-val TextMuted = Color(0xFF5C7893)
+val CyberCyan = Color(0xFF38BDF8)
+val CyberCyanContainer = Color(0xFF0C4A6E)
+val CyberCyanOnContainer = Color(0xFFBAE6FD)
 
-// High-Tech Cyber Off-Grid Palette (from App Screenshots)
-val DeepDarkBg = Color(0xFF0B0F14)
-val CardDarkBg = Color(0xFF151C24)
-val CardBorder = Color(0xFF222C38)
-val CyberCyan = Color(0xFF00E5BD)
-val CyberTeal = Color(0xFF00C9A7)
-val DarkTealCard = Color(0xFF132320)
-val DarkTealBorder = Color(0xFF1D4E43)
-val DarkTealHeader = Color(0xFF0F2B26)
-val PurpleAccent = Color(0xFFBC8CFF)
-val PurpleDarkCard = Color(0xFF1B172E)
-val PurpleDarkBorder = Color(0xFF4C3268)
-val PurpleDarkHeader = Color(0xFF2D1F3D)
-val VaultNavyHeader = Color(0xFF192838)
-val VaultNavyBorder = Color(0xFF234B68)
-val GreenSuccess = Color(0xFF3FB950)
-val BlueAccent = Color(0xFF58A6FF)
-val CoralRed = Color(0xFFF85149)
+val MeshtasticGreen = Color(0xFF10B981)
+val MeshtasticGreenDim = Color(0xFF064E3B)
+val MeshtasticGreenLight = Color(0xFF059669)
 
-// Light mode counterparts (Clean Technical Lab Light)
-val LabLightBg = Color(0xFFF3F7FA)
-val LabLightSurface = Color(0xFFFFFFFF)
-val LabLightCard = Color(0xFFE8F0F7)
-val MeshtasticGreenLight = Color(0xFF008E46)
-val MeshCoreCyanLight = Color(0xFF0077B6)
+val MeshCoreCyan = Color(0xFF0284C7)
+val MeshCoreCyanDim = Color(0xFF075985)
+val MeshCoreCyanLight = Color(0xFF0369A1)
+
+// ==========================================
+// Status & Telemetry Accents
+// ==========================================
+val AmberSignal = Color(0xFFF59E0B)
+val AmberSignalContainer = Color(0xFF451A03)
+val CoralError = Color(0xFFEF4444)
+val CoralErrorContainer = Color(0xFF450A0A)
+val CoralRed = Color(0xFFEF4444)
+val GreenSuccess = Color(0xFF10B981)
+val BlueAccent = Color(0xFF38BDF8)
+val PurpleAccent = Color(0xFFA78BFA)
+val PurpleDarkHeader = Color(0xFF2E1065)
+val PurpleDarkCard = Color(0xFF1E1B4B)
+val PurpleDarkBorder = Color(0xFF4C1D95)
+val VioletNrf = Color(0xFFA78BFA)
+val EspOrange = Color(0xFFF97316)
+
+// Vault Theme Colors
+val VaultNavyHeader = Color(0xFF0F2B48)
+val VaultNavyBorder = Color(0xFF1E40AF)
+
+// Legacy Palette compatibility aliases
+val ObsidianBg = DarkBackground
+val SlateSurface = DarkSurface
+val SlateCard = DarkSurfaceContainer
+val SlateElevated = DarkSurfaceContainerHigh
+val SlateBorder = DarkOutline
+val DeepDarkBg = DarkBackground
+val CardDarkBg = DarkSurfaceContainer
+val CardBorder = DarkOutlineVariant
+val DarkTealCard = Color(0xFF0B2923)
+val DarkTealBorder = Color(0xFF0D5E51)
+val DarkTealHeader = Color(0xFF08221D)
+val TextPrimary = DarkTextPrimary
+val TextSecondary = DarkTextSecondary
+val TextMuted = DarkTextMuted
+val LabLightBg = LightBackground
+val LabLightSurface = LightSurface
+val LabLightCard = LightSurfaceContainer

@@ -1,5 +1,6 @@
 package com.example.ui.theme
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -7,52 +8,72 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val DarkWorkbenchColorScheme = darkColorScheme(
-    primary = MeshtasticGreen,
-    onPrimary = Color(0xFF002612),
-    primaryContainer = MeshtasticGreenDim,
-    onPrimaryContainer = Color(0xFFA7F3D0),
-    secondary = MeshCoreCyan,
-    onSecondary = Color(0xFF002436),
-    secondaryContainer = MeshCoreCyanDim,
-    onSecondaryContainer = Color(0xFFB3E5FC),
+    primary = CyberTeal,
+    onPrimary = Color(0xFF00382E),
+    primaryContainer = CyberTealContainer,
+    onPrimaryContainer = CyberTealOnContainer,
+    secondary = CyberCyan,
+    onSecondary = Color(0xFF00354E),
+    secondaryContainer = CyberCyanContainer,
+    onSecondaryContainer = CyberCyanOnContainer,
     tertiary = AmberSignal,
-    onTertiary = Color(0xFF2A1B00),
-    background = ObsidianBg,
-    onBackground = TextPrimary,
-    surface = SlateSurface,
-    onSurface = TextPrimary,
-    surfaceVariant = SlateCard,
-    onSurfaceVariant = TextSecondary,
-    outline = SlateBorder,
+    onTertiary = Color(0xFF451A03),
+    tertiaryContainer = AmberSignalContainer,
+    onTertiaryContainer = Color(0xFFFDE68A),
+    background = DarkBackground,
+    onBackground = DarkTextPrimary,
+    surface = DarkSurface,
+    onSurface = DarkTextPrimary,
+    surfaceVariant = DarkSurfaceContainerHigh,
+    onSurfaceVariant = DarkTextSecondary,
+    surfaceContainerLowest = DarkBackground,
+    surfaceContainerLow = DarkSurfaceContainerLow,
+    surfaceContainer = DarkSurfaceContainer,
+    surfaceContainerHigh = DarkSurfaceContainerHigh,
+    surfaceContainerHighest = DarkSurfaceContainerHighest,
+    outline = DarkOutline,
+    outlineVariant = DarkOutlineVariant,
     error = CoralError,
-    onError = Color.White
+    onError = Color.White,
+    errorContainer = CoralErrorContainer,
+    onErrorContainer = Color(0xFFFECACA)
 )
 
 private val LightWorkbenchColorScheme = lightColorScheme(
-    primary = MeshtasticGreenLight,
+    primary = CyberTealDark,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD1FAE5),
-    onPrimaryContainer = Color(0xFF064E3B),
+    primaryContainer = Color(0xFFCCFBF1),
+    onPrimaryContainer = Color(0xFF115E59),
     secondary = MeshCoreCyanLight,
     onSecondary = Color.White,
     secondaryContainer = Color(0xFFE0F2FE),
     onSecondaryContainer = Color(0xFF0C4A6E),
     tertiary = Color(0xFFD97706),
     onTertiary = Color.White,
-    background = LabLightBg,
-    onBackground = Color(0xFF0F172A),
-    surface = LabLightSurface,
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = LabLightCard,
-    onSurfaceVariant = Color(0xFF334155),
-    outline = Color(0xFFCBD5E1),
+    tertiaryContainer = Color(0xFFFEF3C7),
+    onTertiaryContainer = Color(0xFF78350F),
+    background = LightBackground,
+    onBackground = LightTextPrimary,
+    surface = LightSurface,
+    onSurface = LightTextPrimary,
+    surfaceVariant = LightSurfaceContainerHigh,
+    onSurfaceVariant = LightTextSecondary,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = LightSurfaceContainerLow,
+    surfaceContainer = LightSurfaceContainer,
+    surfaceContainerHigh = LightSurfaceContainerHigh,
+    surfaceContainerHighest = LightSurfaceContainerHighest,
+    outline = LightOutline,
+    outlineVariant = LightOutlineVariant,
     error = CoralError,
-    onError = Color.White
+    onError = Color.White,
+    errorContainer = Color(0xFFFEE2E2),
+    onErrorContainer = Color(0xFF991B1B)
 )
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true,
+    darkTheme: Boolean = isSystemInDarkTheme(),
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {

@@ -1,15 +1,17 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,27 +24,28 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckBox
-import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -54,9 +57,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.model.BoardCatalog
 import com.example.model.CachedFirmwareEntry
 import com.example.model.FirmwareEcosystem
@@ -66,18 +71,12 @@ import com.example.ui.MeshInstallerUiState
 import com.example.ui.components.HardwareChipBadge
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.EspOrange
+import com.example.ui.theme.GreenSuccess
 import com.example.ui.theme.MeshCoreCyan
 import com.example.ui.theme.MeshtasticGreen
-import com.example.ui.theme.ObsidianBg
-import com.example.ui.theme.SlateBorder
-import com.example.ui.theme.SlateCard
-import com.example.ui.theme.SlateSurface
 import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletNrf
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.ui.theme.MyApplicationTheme
 import java.util.Locale
 
 @Composable
@@ -92,12 +91,6 @@ fun BoardsCatalogScreen(
     onUseSavedEntry: (CachedFirmwareEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val ecoColor = if (uiState.selectedEcosystem == FirmwareEcosystem.MESHTASTIC) {
-        MeshtasticGreen
-    } else {
-        MeshCoreCyan
-    }
-
     val filteredBoards = remember(uiState.mcuFilter, uiState.boardSearchQuery) {
         BoardCatalog.allBoards.filter { board ->
             val matchesMcu = uiState.mcuFilter == null || board.mcu == uiState.mcuFilter
@@ -111,122 +104,129 @@ fun BoardsCatalogScreen(
         }
     }
 
-    val selectedBoards = BoardCatalog.allBoards.filter { it.id in uiState.myDeviceIds }
-    val totalPlannedImages = selectedBoards.sumOf { board ->
-        if (board.id == "lilygo_tdeck") 5 else if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) 5 else 6
-    }
-    val totalSavedMb = uiState.offlineVaultEntries.sumOf { it.sizeBytes } / (1024f * 1024f)
     val batch = uiState.vaultBatchProgress
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Off-Grid Multi-Device Check & Download Banner right at the top of Radios tab!
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(SlateCard)
-                .border(1.dp, MeshtasticGreen.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        // Top Header Card: Clear instruction that this is single-choice target selection
+        OutlinedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.outlinedCardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "OFF-GRID LOCAL FIRMWARE DOWNLOADER",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MeshtasticGreen,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (batch.isDownloading) {
-                            batch.statusDetail
-                        } else if (uiState.offlineVaultEntries.isNotEmpty()) {
-                            "${uiState.offlineVaultEntries.size} firmware files saved locally (%.1f MB) • Ready for local offline use".format(
-                                Locale.US,
-                                totalSavedMb
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(36.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.DeveloperBoard,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Column {
+                            Text(
+                                text = "Radio Hardware Catalog",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
-                        } else {
-                            "Check the radios you use below, then tap Download & Save for Local Use"
-                        },
+                            Text(
+                                text = "Tap any radio to select it as your active flashing target",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                if (batch.isDownloading) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = batch.statusDetail,
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    LinearProgressIndicator(
+                        progress = { batch.overallProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
-
-                HardwareChipBadge(
-                    text = "${uiState.myDeviceIds.size} CHECKED",
-                    color = MeshCoreCyan
-                )
-            }
-
-            if (batch.isDownloading) {
-                LinearProgressIndicator(
-                    progress = { batch.overallProgress.coerceIn(0f, 1f) },
+                // Batch Vault download button (kept for full offline batch functionality)
+                Button(
+                    onClick = onDownloadAllForSelected,
+                    enabled = uiState.myDeviceIds.isNotEmpty() && !batch.isDownloading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(CircleShape),
-                    color = MeshtasticGreen,
-                    trackColor = ObsidianBg
-                )
-            }
-
-            Button(
-                onClick = onDownloadAllForSelected,
-                enabled = uiState.myDeviceIds.isNotEmpty() && !batch.isDownloading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MeshtasticGreen,
-                    contentColor = Color(0xFF002612)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-                    .testTag("boards_tab_download_all_button")
-            ) {
-                if (batch.isDownloading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = Color(0xFF002612)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Downloading ${batch.currentIndex}/${batch.totalCount} (${(batch.overallProgress * 100).toInt()}%)...",
-                        fontWeight = FontWeight.Bold
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.CloudDownload,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (uiState.myDeviceIds.isEmpty()) {
-                            "Check Radios Below to Download Firmware"
-                        } else {
-                            "Download & Save Checked Radios Locally ($totalPlannedImages Files)"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
+                        .height(48.dp)
+                        .testTag("boards_tab_download_all_button")
+                ) {
+                    if (batch.isDownloading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Downloading ${batch.currentIndex}/${batch.totalCount}...",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Sync Firmware for Checked Devices (${uiState.myDeviceIds.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
+        // Search Field
         OutlinedTextField(
             value = uiState.boardSearchQuery,
             onValueChange = onSetSearchQuery,
@@ -234,7 +234,8 @@ fun BoardsCatalogScreen(
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
-                    contentDescription = "Search boards"
+                    contentDescription = "Search boards",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
             singleLine = true,
@@ -243,8 +244,6 @@ fun BoardsCatalogScreen(
                 .fillMaxWidth()
                 .testTag("board_search_input")
         )
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         // MCU Architecture Filter Row
         Row(
@@ -258,8 +257,8 @@ fun BoardsCatalogScreen(
                 onClick = { onSetMcuFilter(null) },
                 label = { Text("All (${BoardCatalog.allBoards.size})") },
                 colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = ecoColor.copy(alpha = 0.2f),
-                    selectedLabelColor = ecoColor
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 modifier = Modifier.testTag("mcu_filter_all")
             )
@@ -269,36 +268,35 @@ fun BoardsCatalogScreen(
                     onClick = { onSetMcuFilter(if (uiState.mcuFilter == mcu) null else mcu) },
                     label = { Text(mcu.shortName) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = ecoColor.copy(alpha = 0.2f),
-                        selectedLabelColor = ecoColor
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                     ),
                     modifier = Modifier.testTag("mcu_filter_${mcu.name.lowercase()}")
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
+        // Radios List
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("boards_catalog_list"),
-            contentPadding = PaddingValues(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(filteredBoards, key = { it.id }) { board ->
+                val isSelected = uiState.selectedBoard.id == board.id
                 val isCheckedForOffline = board.id in uiState.myDeviceIds
                 val savedForBoard = uiState.offlineVaultEntries.filter { it.boardId == board.id }
                 val expectedCount = if (board.id == "lilygo_tdeck") 5 else if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) 5 else 6
 
                 BoardCatalogItemCard(
                     board = board,
-                    isSelected = uiState.selectedBoard.id == board.id,
+                    isSelected = isSelected,
                     isCheckedForOffline = isCheckedForOffline,
                     isDownloading = batch.isDownloading,
                     savedEntries = savedForBoard,
                     expectedCount = expectedCount,
-                    ecoColor = ecoColor,
                     onSelect = { onSelectBoard(board) },
                     onToggleOfflineCheck = { onToggleMyDevice(board.id) },
                     onDownloadBoard = { onDownloadSingleBoard(board.id) },
@@ -317,13 +315,11 @@ private fun BoardCatalogItemCard(
     isDownloading: Boolean,
     savedEntries: List<CachedFirmwareEntry>,
     expectedCount: Int,
-    ecoColor: Color,
     onSelect: () -> Unit,
     onToggleOfflineCheck: () -> Unit,
     onDownloadBoard: () -> Unit,
     onUseSavedEntry: (CachedFirmwareEntry) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
     val mcuColor = when (board.mcu) {
         McuArchitecture.NRF52840 -> VioletNrf
         McuArchitecture.RP2040 -> AmberSignal
@@ -331,310 +327,222 @@ private fun BoardCatalogItemCard(
     }
     val isFullySaved = savedEntries.size >= expectedCount
 
-    Column(
+    OutlinedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(SlateCard)
-            .border(
-                width = if (isSelected || isCheckedForOffline) 1.8.dp else 1.dp,
-                color = when {
-                    isFullySaved -> MeshtasticGreen
-                    isSelected -> ecoColor
-                    isCheckedForOffline -> MeshCoreCyan
-                    else -> SlateBorder
-                },
-                shape = RoundedCornerShape(14.dp)
-            )
             .clickable { onSelect() }
-            .padding(14.dp)
-            .testTag("board_item_${board.id}")
+            .testTag("board_item_${board.id}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceContainer
+        ),
+        border = BorderStroke(
+            width = if (isSelected) 2.dp else 1.dp,
+            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        )
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Header Row: Single-Choice Radio Selection Indicator + Name + Active Badge
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = if (isCheckedForOffline) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                    contentDescription = if (isCheckedForOffline) "Checked for Offline" else "Check for Offline",
-                    tint = if (isCheckedForOffline) MeshtasticGreen else TextMuted,
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { onToggleOfflineCheck() }
-                        .testTag("board_offline_checkbox_${board.id}")
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // Single-choice radio icon: Only the ONE active target is filled!
+                    Surface(
+                        modifier = Modifier.size(24.dp),
+                        shape = CircleShape,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        border = BorderStroke(
+                            2.dp,
+                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                        )
+                    ) {
+                        if (isSelected) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Surface(
+                                    modifier = Modifier.size(8.dp),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                ) {}
+                            }
+                        }
+                    }
+
+                    Column {
                         Text(
                             text = board.name,
                             style = MaterialTheme.typography.titleMedium,
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold
                         )
-                        if (isSelected) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Active Board",
-                                tint = ecoColor,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                        Text(
+                            text = "${board.manufacturer} • ${board.usbBridge}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
+                }
+
+                // Show prominent ACTIVE TARGET badge ONLY on the one selected board
+                if (isSelected) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    ) {
+                        Text(
+                            text = "ACTIVE TARGET ✓",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                } else {
+                    HardwareChipBadge(text = board.mcu.shortName, color = mcuColor)
+                }
+            }
+
+            // Specs badges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                HardwareChipBadge(text = board.loraChip, color = AmberSignal)
+                HardwareChipBadge(text = "${board.flashSizeMb}MB FLASH", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (board.hasGps) HardwareChipBadge(text = "GNSS / GPS", color = MeshtasticGreen)
+                if (board.hasEInk) HardwareChipBadge(text = "E-INK", color = MeshCoreCyan)
+                else if (board.hasOled) HardwareChipBadge(text = "OLED/TFT", color = MeshCoreCyan)
+            }
+
+            // Bottom Actions: Vault Cache Checkbox button + Direct Download
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Secondary Vault Cache Action (retains testTag for automated testing)
+                Surface(
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onToggleOfflineCheck() }
+                        .testTag("board_offline_checkbox_${board.id}"),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isCheckedForOffline) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        1.dp,
+                        if (isCheckedForOffline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isCheckedForOffline) Icons.Default.Check else Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            tint = if (isCheckedForOffline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (isCheckedForOffline) "Vault: Saved" else "Vault: Cache",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isCheckedForOffline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Download & Save Button
+                Button(
+                    onClick = onDownloadBoard,
+                    enabled = !isDownloading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isFullySaved) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.primary,
+                        contentColor = if (isFullySaved) GreenSuccess else MaterialTheme.colorScheme.onPrimary
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag("catalog_download_board_${board.id}")
+                ) {
+                    Icon(
+                        imageVector = if (isFullySaved) Icons.Default.CloudDone else Icons.Default.CloudDownload,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "${board.manufacturer} • ${board.usbBridge}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        text = if (isFullySaved) {
+                            "Cached (${savedEntries.size}/$expectedCount)"
+                        } else {
+                            "Download ($expectedCount)"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
 
-            HardwareChipBadge(text = board.mcu.shortName, color = mcuColor)
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            HardwareChipBadge(text = board.loraChip, color = AmberSignal)
-            HardwareChipBadge(text = "${board.flashSizeMb}MB FLASH", color = TextSecondary)
-            if (board.hasGps) HardwareChipBadge(text = "GNSS / GPS", color = MeshtasticGreen)
-            if (board.hasEInk) HardwareChipBadge(text = "E-INK", color = MeshCoreCyan)
-            else if (board.hasOled) HardwareChipBadge(text = "OLED/TFT", color = MeshCoreCyan)
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Direct Per-Board Download & Save Action Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedButton(
-                onClick = onToggleOfflineCheck,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = if (isCheckedForOffline) "Checked for Offline" else "Check Radio",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isCheckedForOffline) MeshtasticGreen else TextSecondary
-                )
-            }
-
-            Button(
-                onClick = onDownloadBoard,
-                enabled = !isDownloading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isFullySaved) SlateSurface else MeshtasticGreen,
-                    contentColor = if (isFullySaved) MeshtasticGreen else Color(0xFF002612)
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                modifier = Modifier.testTag("catalog_download_board_${board.id}")
-            ) {
-                Icon(
-                    imageVector = if (isFullySaved) Icons.Default.CloudDone else Icons.Default.CloudDownload,
-                    contentDescription = null,
-                    modifier = Modifier.size(15.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (isFullySaved) {
-                        "Saved Locally (${savedEntries.size}/$expectedCount)"
-                    } else {
-                        "Download & Save ($expectedCount Files)"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Show Saved Local Firmware Files with "Use Local" button
-        if (savedEntries.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(ObsidianBg)
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Text(
-                    text = "SAVED LOCAL FIRMWARE FILES (TAP TO USE LOCAL):",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MeshtasticGreen,
-                    fontWeight = FontWeight.Bold
-                )
-                savedEntries.sortedWith(
-                    compareBy<CachedFirmwareEntry> { it.ecosystem != FirmwareEcosystem.MESHTASTIC }
-                        .thenBy { it.variantLabel }
-                ).forEach { entry ->
-                    val accent = if (entry.ecosystem == FirmwareEcosystem.MESHTASTIC) MeshtasticGreen else MeshCoreCyan
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SlateCard)
-                            .clickable { onUseSavedEntry(entry) }
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            // Saved firmware files list (if cached)
+            if (savedEntries.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = entry.variantLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = accent,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "${entry.fileName} (${entry.sizeBytes / 1024} KB)",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(accent.copy(alpha = 0.16f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.FolderOpen,
-                                contentDescription = "Use Local",
-                                tint = accent,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Use Local",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = accent,
-                                fontWeight = FontWeight.Bold
-                            )
+                        Text(
+                            text = "CACHED LOCAL FIRMWARE (TAP TO LOAD):",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = GreenSuccess
+                        )
+                        savedEntries.forEach { entry ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onUseSavedEntry(entry) },
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${entry.ecosystem.displayName} • ${entry.variantLabel} (${entry.versionTag})",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "USE LOCAL",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Targets: ${board.meshtasticTarget} / ${board.meshCoreTarget}",
-                style = MaterialTheme.typography.labelSmall,
-                color = TextMuted
-            )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable { expanded = !expanded }
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                    .testTag("board_pinout_toggle_${board.id}")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = "Bootloader & Pinout Info",
-                    tint = ecoColor,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = if (expanded) "Hide Pinout" else "Bootloader & Pins",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = ecoColor
-                )
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    tint = ecoColor,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
-        AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier
-                    .padding(top = 10.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(ObsidianBg)
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = "BOOTLOADER & DFU RECOVERY GUIDE",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AmberSignal
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = board.bootloaderGuide,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextPrimary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider(color = SlateBorder)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "HARDWARE GPIO & RF PINOUT",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = ecoColor
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = board.pinoutSummary,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                if (!isSelected) {
-                    Button(
-                        onClick = onSelect,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = ecoColor,
-                            contentColor = Color(0xFF002211)
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Use ${board.name} in Flasher", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Preview(name = "Boards Catalog Screen", showBackground = true, backgroundColor = 0xFF0B0F19)
-@Composable
-fun BoardsCatalogScreenPreview() {
-    MyApplicationTheme(darkTheme = true) {
-        BoardsCatalogScreen(
-            uiState = MeshInstallerUiState(),
-            onSelectBoard = {},
-            onSetMcuFilter = {},
-            onSetSearchQuery = {}
-        )
     }
 }

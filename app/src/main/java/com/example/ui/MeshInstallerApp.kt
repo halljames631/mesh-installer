@@ -6,7 +6,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DeveloperBoard
@@ -25,11 +23,13 @@ import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,13 +37,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,13 +52,6 @@ import com.example.ui.screens.OffGridVaultDialog
 import com.example.ui.screens.OffGridVaultScreen
 import com.example.ui.screens.SerialConsoleScreen
 import com.example.ui.screens.TestBenchScreen
-import com.example.ui.theme.AmberSignal
-import com.example.ui.theme.BlueAccent
-import com.example.ui.theme.CyberCyan
-import com.example.ui.theme.CyberTeal
-import com.example.ui.theme.DeepDarkBg
-import com.example.ui.theme.PurpleAccent
-import com.example.ui.theme.TextSecondary
 
 enum class InstallerTab(
     val route: String,
@@ -91,7 +80,7 @@ fun MeshInstallerApp(
         }
     }
 
-    // Zero-permission Android Storage Access Framework launcher for local .bin / .uf2 / .zip firmware files
+    // Zero-permission Android Storage Access Framework launcher for local firmware files
     val firmwareFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -143,13 +132,13 @@ fun MeshInstallerApp(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(DeepDarkBg)
+            .background(MaterialTheme.colorScheme.background)
     ) {
         val isWideScreen = maxWidth >= 680.dp
 
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
-            containerColor = DeepDarkBg,
+            containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
                 if (!isWideScreen) {
                     val mainTabs = listOf(
@@ -160,51 +149,35 @@ fun MeshInstallerApp(
                         InstallerTab.TEST_BENCH
                     )
                     NavigationBar(
-                        containerColor = Color(0xFF0D1117),
-                        tonalElevation = 0.dp,
-                        modifier = Modifier.border(width = 1.dp, color = Color(0xFF21262D))
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        tonalElevation = 2.dp
                     ) {
                         mainTabs.forEach { tab ->
                             val selected = currentTab == tab
-                            val tabColor = when (tab) {
-                                InstallerTab.FLASHER -> CyberCyan
-                                InstallerTab.BOARDS -> CyberTeal
-                                InstallerTab.TERMINAL -> PurpleAccent
-                                InstallerTab.VAULT -> BlueAccent
-                                InstallerTab.TEST_BENCH -> AmberSignal
-                                else -> CyberCyan
-                            }
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { currentTab = tab },
                                 icon = {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(CircleShape)
-                                            .background(if (selected) tabColor.copy(alpha = 0.15f) else Color.Transparent),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = tab.icon,
-                                            contentDescription = tab.title,
-                                            tint = if (selected) tabColor else TextSecondary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = tab.icon,
+                                        contentDescription = tab.title,
+                                        modifier = Modifier.size(22.dp)
+                                    )
                                 },
                                 label = {
                                     Text(
                                         text = tab.title,
-                                        style = TextStyle(
-                                            fontSize = 10.sp,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (selected) tabColor else TextSecondary
-                                        )
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 11.sp
                                     )
                                 },
                                 colors = NavigationBarItemDefaults.colors(
-                                    indicatorColor = Color.Transparent
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                 modifier = Modifier.testTag("nav_tab_${tab.route}")
                             )
@@ -220,7 +193,7 @@ fun MeshInstallerApp(
             ) {
                 if (isWideScreen) {
                     NavigationRail(
-                        containerColor = Color(0xFF0D1117),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
                         modifier = Modifier.fillMaxHeight()
                     ) {
                         val mainTabs = listOf(
@@ -232,25 +205,23 @@ fun MeshInstallerApp(
                         )
                         mainTabs.forEach { tab ->
                             val selected = currentTab == tab
-                            val tabColor = when (tab) {
-                                InstallerTab.FLASHER -> CyberCyan
-                                InstallerTab.BOARDS -> CyberTeal
-                                InstallerTab.TERMINAL -> PurpleAccent
-                                InstallerTab.VAULT -> BlueAccent
-                                InstallerTab.TEST_BENCH -> AmberSignal
-                                else -> CyberCyan
-                            }
                             NavigationRailItem(
                                 selected = selected,
                                 onClick = { currentTab = tab },
                                 icon = {
                                     Icon(
                                         imageVector = tab.icon,
-                                        contentDescription = tab.title,
-                                        tint = if (selected) tabColor else TextSecondary
+                                        contentDescription = tab.title
                                     )
                                 },
                                 label = { Text(tab.title) },
+                                colors = NavigationRailItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
                                 modifier = Modifier.testTag("nav_rail_${tab.route}")
                             )
                         }

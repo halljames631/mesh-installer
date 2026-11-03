@@ -85,7 +85,7 @@ class OfflineFirmwareVaultManager(context: Context) {
     fun getMyDeviceIds(): Set<String> {
         val stored = prefs.getStringSet(KEY_MY_DEVICES, null)
         return if (stored.isNullOrEmpty()) {
-            DEFAULT_POPULAR_DEVICE_IDS
+            setOf("heltec_v4")
         } else {
             stored.toSet()
         }
