@@ -1,31 +1,39 @@
 package com.example.ui.theme
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 private val DarkWorkbenchColorScheme = darkColorScheme(
-    primary = MeshtasticGreen,
-    onPrimary = Color(0xFF002612),
-    primaryContainer = MeshtasticGreenDim,
-    onPrimaryContainer = Color(0xFFA7F3D0),
-    secondary = MeshCoreCyan,
-    onSecondary = Color(0xFF002436),
-    secondaryContainer = MeshCoreCyanDim,
-    onSecondaryContainer = Color(0xFFB3E5FC),
+    primary = CyberCyan,
+    onPrimary = Color(0xFF00241D),
+    primaryContainer = DarkTealCard,
+    onPrimaryContainer = CyberCyan,
+    secondary = BlueAccent,
+    onSecondary = Color(0xFF001E36),
+    secondaryContainer = Color(0xFF162536),
+    onSecondaryContainer = Color(0xFFD0E8FF),
     tertiary = AmberSignal,
     onTertiary = Color(0xFF2A1B00),
-    background = ObsidianBg,
+    tertiaryContainer = Color(0xFF2B2110),
+    onTertiaryContainer = Color(0xFFFFDEA6),
+    background = DeepDarkBg,
     onBackground = TextPrimary,
-    surface = SlateSurface,
+    surface = CardDarkBg,
     onSurface = TextPrimary,
-    surfaceVariant = SlateCard,
+    surfaceVariant = Color(0xFF1B2430),
     onSurfaceVariant = TextSecondary,
-    outline = SlateBorder,
-    error = CoralError,
-    onError = Color.White
+    outline = CardBorder,
+    outlineVariant = Color(0xFF2D3A4B),
+    error = CoralRed,
+    onError = Color.White,
+    errorContainer = Color(0xFF331518),
+    onErrorContainer = Color(0xFFFFB4AB)
 )
 
 private val LightWorkbenchColorScheme = lightColorScheme(
@@ -50,6 +58,14 @@ private val LightWorkbenchColorScheme = lightColorScheme(
     onError = Color.White
 )
 
+val WorkbenchShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(24.dp)
+)
+
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = true,
@@ -61,6 +77,7 @@ fun MyApplicationTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
+        shapes = WorkbenchShapes,
         content = content
     )
 }

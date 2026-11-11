@@ -265,34 +265,46 @@ data class ConsoleLogEntry(
 object BoardCatalog {
     private val esp32S3Partitions8Mb = listOf(
         FlashPartition("Bootloader", "0x0000", 64, "bootloader.bin"),
-        FlashPartition("Partition Table", "0x8000", 32, "partitions.bin"),
+        FlashPartition("Partition Table", "0x8000", 4, "partitions.bin"),
+        FlashPartition("NVS (Keys/Config)", "0x9000", 20, "nvs.bin"),
         FlashPartition("OTA Data (boot_app0)", "0xE000", 8, "boot_app0.bin"),
         FlashPartition("Application (App0)", "0x10000", 3072, "firmware.bin"),
-        FlashPartition("LittleFS / WebUI", "0x300000", 2048, "littlefs.bin", isRequired = false)
+        FlashPartition("LittleFS / WebUI (8MB)", "0x300000", 1024, "littlefs.bin", isRequired = false),
+        FlashPartition("Meshtastic LittleFS (8MB)", "0x670000", 1536, "spiffs.bin", isRequired = false)
     )
 
     private val esp32S3Partitions16Mb = listOf(
         FlashPartition("Bootloader", "0x0000", 64, "bootloader.bin"),
-        FlashPartition("Partition Table", "0x8000", 32, "partitions.bin"),
-        FlashPartition("NVS", "0x9000", 20, "nvs.bin"),
+        FlashPartition("Partition Table", "0x8000", 4, "partitions.bin"),
+        FlashPartition("NVS (Keys/Config)", "0x9000", 20, "nvs.bin"),
         FlashPartition("OTA Data (boot_app0)", "0xE000", 8, "boot_app0.bin"),
         FlashPartition("Application (App0)", "0x10000", 6400, "firmware.bin"),
         FlashPartition("Application (App1)", "0x650000", 6400, "app1.bin", isRequired = false),
-        FlashPartition("SPIFFS / LittleFS", "0xC90000", 3456, "littlefs.bin", isRequired = false)
+        FlashPartition("SPIFFS / LittleFS (16MB)", "0xC90000", 3456, "littlefs.bin", isRequired = false)
+    )
+
+    private val esp32S3Partitions4Mb = listOf(
+        FlashPartition("Bootloader (ESP32-S3)", "0x0000", 64, "bootloader.bin"),
+        FlashPartition("Partition Table", "0x8000", 4, "partitions.bin"),
+        FlashPartition("NVS (Keys/Config)", "0x9000", 20, "nvs.bin"),
+        FlashPartition("OTA Data (boot_app0)", "0xE000", 8, "boot_app0.bin"),
+        FlashPartition("Application (App0)", "0x10000", 2048, "firmware.bin"),
+        FlashPartition("SPIFFS / LittleFS (4MB)", "0x290000", 1472, "littlefs.bin", isRequired = false)
     )
 
     private val esp32Partitions4Mb = listOf(
-        FlashPartition("Bootloader", "0x1000", 64, "bootloader.bin"),
-        FlashPartition("Partition Table", "0x8000", 32, "partitions.bin"),
+        FlashPartition("Bootloader (ESP32 LX6)", "0x1000", 60, "bootloader.bin"),
+        FlashPartition("Partition Table", "0x8000", 4, "partitions.bin"),
+        FlashPartition("NVS (Keys/Config)", "0x9000", 20, "nvs.bin"),
         FlashPartition("OTA Data (boot_app0)", "0xE000", 8, "boot_app0.bin"),
         FlashPartition("Application (App0)", "0x10000", 2048, "firmware.bin"),
-        FlashPartition("SPIFFS / LittleFS", "0x290000", 1024, "littlefs.bin", isRequired = false)
+        FlashPartition("SPIFFS / LittleFS (4MB)", "0x290000", 1472, "littlefs.bin", isRequired = false)
     )
 
     private val nrf52Partitions = listOf(
         FlashPartition("SoftDevice S140 v7.3", "0x00000", 152, "s140_nrf52_7.3.0.hex", isRequired = false),
-        FlashPartition("Application Image", "0x26000", 720, "firmware.uf2 / dfu.zip"),
-        FlashPartition("Internal LittleFS (NVS)", "0xED000", 44, "adafruit_littlefs", isRequired = false),
+        FlashPartition("Application Image", "0x26000", 796, "firmware.uf2 / dfu.zip"),
+        FlashPartition("InternalFS (Config/Bonds)", "0xED000", 28, "adafruit_littlefs", isRequired = false),
         FlashPartition("UF2 Bootloader", "0xF4000", 48, "bootloader.hex", isRequired = false)
     )
 
@@ -420,7 +432,7 @@ object BoardCatalog {
             meshtasticTarget = "tracker-t1000-e",
             meshCoreTarget = "t1000e",
             partitions = nrf52Partitions,
-            bootloaderGuide = "Press and hold the button while attaching the magnetic USB pogo cable, or trigger DFU mode wirelessly over Bluetooth LE.",
+            bootloaderGuide = "Hold device button for 3s while plugging in magnetic USB cable (or double-flick magnetic pogo cable if on factory bootloader) until green LED stays solid and T1000-E drive mounts.",
             pinoutSummary = "nRF52840 + Semtech LR1110 Transceiver | Mediatek AG3335 GPS | IP65 Card Enclosure"
         ),
         HardwareBoard(
@@ -608,9 +620,72 @@ object BoardCatalog {
             hasGps = false,
             meshtasticTarget = "tlora-t3s3-v1",
             meshCoreTarget = "LilyGo_T3S3_sx1262",
-            partitions = esp32Partitions4Mb,
+            partitions = esp32S3Partitions4Mb,
             bootloaderGuide = "Hold BOOT button on board while pressing RST or connecting USB-C.",
             pinoutSummary = "ESP32-S3FH4R2 | 0.96\" SSD1306 OLED | MicroSD Slot | Solar & LiPo Charger"
+        ),
+        HardwareBoard(
+            id = "heltec_v2",
+            name = "Heltec WiFi LoRa 32 V2.1 (ESP32)",
+            manufacturer = "Heltec Automation",
+            mcu = McuArchitecture.ESP32,
+            loraChip = "Semtech SX1276 / SX1278",
+            frequencyBands = "433 / 868 / 915 MHz",
+            usbBridge = "CP2102 USB-UART",
+            vendorId = 4292, // 0x10C4 Silabs
+            productId = 60000,
+            flashSizeMb = 4,
+            psramMb = 0,
+            hasOled = true,
+            hasEInk = false,
+            hasGps = false,
+            meshtasticTarget = "heltec-v2_1",
+            meshCoreTarget = "Heltec_v2",
+            partitions = esp32Partitions4Mb,
+            bootloaderGuide = "Auto-resets via CP2102 DTR/RTS. If sync stalls, hold PRG button while pressing RST.",
+            pinoutSummary = "ESP32-D0WDQ6 (LX6) | SX1276 NSS:18, DIO0:26, RST:14 | 0.96\" OLED SDA:4, SCL:15"
+        ),
+        HardwareBoard(
+            id = "lilygo_tlora_v2_1",
+            name = "LilyGO T-LoRa V2.1-1.6 (ESP32)",
+            manufacturer = "LilyGO",
+            mcu = McuArchitecture.ESP32,
+            loraChip = "Semtech SX1276 / SX1278",
+            frequencyBands = "433 / 868 / 915 MHz",
+            usbBridge = "CH9102F / CP2104 UART",
+            vendorId = 6790, // 0x1A86 QinHeng CH9102F
+            productId = 21972,
+            flashSizeMb = 4,
+            psramMb = 0,
+            hasOled = true,
+            hasEInk = false,
+            hasGps = false,
+            meshtasticTarget = "tlora-v2-1-1_6",
+            meshCoreTarget = "TLora_V2_1_1p6",
+            partitions = esp32Partitions4Mb,
+            bootloaderGuide = "Auto-resets via CH9102F/CP2104 DTR/RTS. Or hold IO0/BOOT while toggling power.",
+            pinoutSummary = "ESP32-PICO-D4 / D0WDQ6 | SX1276 | 0.96\" OLED | MicroSD Slot"
+        ),
+        HardwareBoard(
+            id = "heltec_vision_master_e290",
+            name = "Heltec Vision Master E290 (ESP32-S3)",
+            manufacturer = "Heltec Automation",
+            mcu = McuArchitecture.ESP32_S3,
+            loraChip = "Semtech SX1262",
+            frequencyBands = "433 / 868 / 915 MHz",
+            usbBridge = "ESP32-S3 Native USB CDC/JTAG",
+            vendorId = 12346, // 0x303A Espressif
+            productId = 4097,
+            flashSizeMb = 8,
+            psramMb = 8,
+            hasOled = false,
+            hasEInk = true,
+            hasGps = false,
+            meshtasticTarget = "heltec-vision-master-e290",
+            meshCoreTarget = "Heltec_Vision_Master_E290",
+            partitions = esp32S3Partitions8Mb,
+            bootloaderGuide = "Hold BOOT button while clicking RST or connecting USB-C.",
+            pinoutSummary = "ESP32-S3R8 (8MB Flash/PSRAM) + SX1262 | 2.9\" E-Ink Display"
         ),
         HardwareBoard(
             id = "elecrow_thinknode_m1",
@@ -651,7 +726,8 @@ object BoardCatalog {
             meshtasticTarget = "rpi-pico",
             meshCoreTarget = "PicoW",
             partitions = listOf(
-                FlashPartition("RP2040 UF2 Flash Image", "0x10000000", 2048, "firmware-rpi-pico.uf2")
+                FlashPartition("RP2040 UF2 Flash Image", "0x10000000", 2048, "firmware-rpi-pico.uf2"),
+                FlashPartition("LittleFS Config (RP2040)", "0x101C0000", 64, "littlefs", isRequired = false)
             ),
             bootloaderGuide = "Hold BOOTSEL button on the Pico while plugging in USB, or use 1200bps serial touch reset.",
             pinoutSummary = "RP2040 Dual Cortex-M0+ @ 133MHz | Waveshare Pico-LoRa-SX1262 Stackable HAT"
@@ -675,6 +751,7 @@ object BoardCatalog {
                 (nameLower.contains("t1000") && it.id == "seeed_t1000e") ||
                 (nameLower.contains("t-deck") && it.id == "lilygo_tdeck") ||
                 (nameLower.contains("heltec") && (nameLower.contains("v4") || nameLower.contains("v 4")) && it.id == "heltec_v4") ||
+                (nameLower.contains("heltec") && (nameLower.contains("v2") || nameLower.contains("v 2")) && it.id == "heltec_v2") ||
                 (nameLower.contains("heltec") && it.id == "heltec_v3")
         }?.let { return it }
 
@@ -714,7 +791,10 @@ data class PreparedFirmwareImage(
     val flashOffset: Int,
     val fileName: String,
     val isFullFactoryImage: Boolean,
-    val isRealBinary: Boolean
+    val isRealBinary: Boolean,
+    val littleFsBytes: ByteArray? = null,
+    val littleFsOffset: Int = 0x300000,
+    val littleFsFileName: String? = null
 )
 
 data class VaultTargetSpec(

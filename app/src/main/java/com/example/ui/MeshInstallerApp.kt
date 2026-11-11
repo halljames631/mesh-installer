@@ -295,6 +295,7 @@ fun MeshInstallerApp(
                             onTrigger1200BpsTouch = viewModel::trigger1200BpsDfuTouch,
                             onTriggerEspReset = viewModel::triggerEspReset,
                             onStartFlash = viewModel::startFirmwareFlash,
+                            onEraseFlash = viewModel::eraseDeviceFlash,
                             onResetFlashState = viewModel::resetFlashState
                         )
 
@@ -303,7 +304,10 @@ fun MeshInstallerApp(
                             onSendCommand = viewModel::sendConsoleCommand,
                             onTrigger1200BpsTouch = viewModel::trigger1200BpsDfuTouch,
                             onTriggerEspReset = viewModel::triggerEspReset,
-                            onClearLogs = viewModel::clearConsoleLogs
+                            onClearLogs = viewModel::clearConsoleLogs,
+                            onStartSerialMonitor = viewModel::startLiveSerialMonitor,
+                            onStopSerialMonitor = viewModel::stopLiveSerialMonitor,
+                            onSelectBaudRate = viewModel::setBaudRate
                         )
 
                         InstallerTab.VAULT -> OffGridVaultScreen(
@@ -319,6 +323,7 @@ fun MeshInstallerApp(
                                 currentTab = InstallerTab.FLASHER
                             },
                             onToggleMyDevice = viewModel::toggleMyDevice,
+                            onDeleteBoardEntries = viewModel::deleteVaultEntriesForBoard,
                             onClearVault = viewModel::clearOfflineVault
                         )
 

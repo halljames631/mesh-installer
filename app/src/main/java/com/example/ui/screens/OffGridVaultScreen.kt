@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,7 +27,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -40,10 +43,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.example.model.BoardCatalog
 import com.example.model.CachedFirmwareEntry
 import com.example.model.FirmwareEcosystem
@@ -52,6 +57,7 @@ import com.example.ui.MeshInstallerUiState
 import com.example.ui.theme.BlueAccent
 import com.example.ui.theme.CardBorder
 import com.example.ui.theme.CardDarkBg
+import com.example.ui.theme.CoralRed
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberTeal
 import com.example.ui.theme.DarkTealCard
@@ -62,6 +68,7 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VaultNavyBorder
 import com.example.ui.theme.VaultNavyHeader
+import java.io.File
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -73,11 +80,35 @@ fun OffGridVaultScreen(
     onDownloadSingleBoard: (String) -> Unit = {},
     onUseSavedEntry: (CachedFirmwareEntry) -> Unit,
     onToggleMyDevice: (String) -> Unit,
+    onDeleteBoardEntries: (String) -> Unit = {},
     onClearVault: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val savedCount = uiState.offlineVaultEntries.size
     val isDownloading = uiState.vaultBatchProgress.isDownloading
+    val context = LocalContext.current
+
+    fun shareFirmwareEntry(entry: CachedFirmwareEntry) {
+        val file = File(entry.localFilePath)
+        if (file.exists()) {
+            try {
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, entry.fileName)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Export / Share Firmware"))
+            } catch (e: Exception) {
+                // Ignore fallback
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -132,11 +163,13 @@ fun OffGridVaultScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
                             )
+                            val totalBytes = uiState.offlineVaultEntries.sumOf { it.sizeBytes }
+                            val totalMb = totalBytes / (1024f * 1024f)
                             Text(
-                                text = "MY DEVICES (${uiState.myDeviceIds.size}) • 100% OFF-GRID READY",
+                                text = "Vault Storage: %.1f MB (%d binaries cached)".format(Locale.US, totalMb, savedCount),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = BlueAccent,
+                                color = CyberCyan,
                                 letterSpacing = 0.5.sp
                             )
                         }
@@ -267,24 +300,49 @@ fun OffGridVaultScreen(
                             if (cachedEntries.isNotEmpty()) {
                                 cachedEntries.forEach { entry ->
                                     val isMeshtasticEntry = entry.ecosystem == FirmwareEcosystem.MESHTASTIC
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (isMeshtasticEntry) DarkTealCard else Color(0xFF1C232D))
-                                            .border(
-                                                1.dp,
-                                                if (isMeshtasticEntry) CyberTeal else BlueAccent,
-                                                RoundedCornerShape(6.dp)
-                                            )
-                                            .clickable { onUseSavedEntry(entry) }
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Text(
-                                            text = "${entry.ecosystem.displayName} ${entry.variantLabel} (${entry.versionTag})",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isMeshtasticEntry) CyberCyan else BlueAccent
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (isMeshtasticEntry) DarkTealCard else Color(0xFF1C232D))
+                                                .border(
+                                                    1.dp,
+                                                    if (isMeshtasticEntry) CyberTeal else BlueAccent,
+                                                    RoundedCornerShape(6.dp)
+                                                )
+                                                .clickable { onUseSavedEntry(entry) }
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                                .testTag("use_saved_entry_${entry.key}")
+                                        ) {
+                                            Text(
+                                                text = "${entry.ecosystem.displayName} ${entry.variantLabel} (${entry.versionTag})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isMeshtasticEntry) CyberCyan else BlueAccent
+                                            )
+                                        }
+
+                                        // Export / Share Button
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF1C232D))
+                                                .border(1.dp, CardBorder, CircleShape)
+                                                .clickable { shareFirmwareEntry(entry) }
+                                                .testTag("share_entry_${entry.key}"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Share,
+                                                contentDescription = "Export / Share ${entry.fileName}",
+                                                tint = CyberCyan,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
                                     }
                                 }
                             } else if (board.id == "lilygo_tdeck") {
@@ -378,6 +436,37 @@ fun OffGridVaultScreen(
                                         fontWeight = FontWeight.Bold,
                                         color = GreenSuccess
                                     )
+                                }
+                            }
+
+                            // Delete Board Cache Set Button
+                            if (isCached) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(CoralRed.copy(alpha = 0.2f))
+                                        .border(1.dp, CoralRed.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                        .clickable { onDeleteBoardEntries(board.id) }
+                                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                                        .testTag("delete_board_vault_${board.id}")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete cache for ${board.name}",
+                                            tint = CoralRed,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                        Text(
+                                            text = "DELETE",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = CoralRed
+                                        )
+                                    }
                                 }
                             }
                         }

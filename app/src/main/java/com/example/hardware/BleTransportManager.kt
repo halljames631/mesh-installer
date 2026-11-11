@@ -294,7 +294,7 @@ class BleTransportManager(
                 ((name.contains("Station", ignoreCase = true) || name.contains("G2", ignoreCase = true)) && b.id == "station_g2") ||
                 (name.contains("RAK", ignoreCase = true) && b.id == "rak4631") ||
                 ((name.contains("T-Echo", ignoreCase = true) || name.contains("TEcho", ignoreCase = true)) && b.id == "lilygo_techo") ||
-                ((name.contains("T1000", ignoreCase = true) || name.contains("SenseCAP", ignoreCase = true)) && b.id == "seeed_t1000e") ||
+                ((name.contains("T1000", ignoreCase = true) || name.contains("SenseCAP", ignoreCase = true) || name.contains("T1KE", ignoreCase = true)) && b.id == "seeed_t1000e") ||
                 (name.contains("AdaDFU", ignoreCase = true) && b.id == "seeed_t1000e") ||
                 ((name.contains("Supreme", ignoreCase = true) || name.contains("T-Beam S3", ignoreCase = true)) && b.id == "lilygo_tbeam_s3") ||
                 (name.contains("T-Beam", ignoreCase = true) && b.id == "lilygo_tbeam_v1_2") ||
@@ -1450,12 +1450,13 @@ class BleTransportManager(
                     if (!servicesReady.isCompleted) {
                         servicesReady.complete(false)
                     }
+                    val disconnectEx = java.io.IOException("Bluetooth connection dropped by target board")
                     pendingMtuAck?.complete(negotiatedMtu)
                     pendingWriteAck?.complete(false)
                     pendingReadAck?.complete(null)
                     pendingDescriptorAck?.complete(false)
-                    pendingControlResponse?.complete(byteArrayOf())
-                    pendingPrnNotification?.complete(byteArrayOf())
+                    pendingControlResponse?.completeExceptionally(disconnectEx)
+                    pendingPrnNotification?.completeExceptionally(disconnectEx)
                 }
             }
 
@@ -2803,6 +2804,23 @@ class BleTransportManager(
             false
         } finally {
             pendingWriteAck = null
+        }
+    }
+
+    fun abortFlash() {
+        try {
+            val ex = java.io.IOException("Bluetooth connection dropped by target board")
+            pendingControlResponse?.completeExceptionally(ex)
+            pendingPrnNotification?.completeExceptionally(ex)
+            pendingWriteAck?.complete(false)
+            pendingReadAck?.complete(null)
+            pendingDescriptorAck?.complete(false)
+            pendingMtuAck?.complete(negotiatedMtu)
+            activeGatt?.disconnect()
+            activeGatt?.close()
+        } catch (_: Exception) {
+        } finally {
+            activeGatt = null
         }
     }
 }

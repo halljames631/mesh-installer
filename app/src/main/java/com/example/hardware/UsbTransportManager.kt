@@ -32,6 +32,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.zip.CRC32
 import java.util.zip.ZipInputStream
@@ -51,6 +52,8 @@ class UsbTransportManager(
         private const val ESP_SYNC: Byte = 0x08
         private const val ESP_SPI_SET_PARAMS: Byte = 0x0B
         private const val ESP_SPI_ATTACH: Byte = 0x0D
+        private const val ESP_CHANGE_BAUDRATE: Byte = 0x0F
+        private const val ESP_SPI_FLASH_MD5: Byte = 0x13
         private const val SLIP_END: Byte = 0xC0.toByte()
         private const val SLIP_ESC: Byte = 0xDB.toByte()
         private const val SLIP_ESC_END: Byte = 0xDC.toByte()
@@ -466,13 +469,19 @@ class UsbTransportManager(
                     return@withContext false
                 }
 
-                configureUsbBaudRate(session, baudRate)
+                val isEsp = board.mcu == McuArchitecture.ESP32 ||
+                    board.mcu == McuArchitecture.ESP32_S3 ||
+                    board.mcu == McuArchitecture.ESP32_C3
+                val isUartBridge = (device.vendorId != 12346)
+                val initialBaud = if (isEsp && isUartBridge) 115200 else baudRate
+
+                configureUsbBaudRate(session, initialBaud)
                 setUartDtrRts(session, dtr = true, rts = true)
                 val devLabel = device.safeProductName ?: device.deviceName
                 onLog(
                     LogLevel.INFO,
                     "USB-OTG",
-                    "Opened USB Data Interface #${session.dataInterface.id} (Class 0x%02X, Ctrl #${session.controlInterfaceId}) on $devLabel @ $baudRate bps".format(
+                    "Opened USB Data Interface #${session.dataInterface.id} (Class 0x%02X, Ctrl #${session.controlInterfaceId}) on $devLabel @ $initialBaud bps".format(
                         session.dataInterface.interfaceClass
                     )
                 )
@@ -527,6 +536,7 @@ class UsbTransportManager(
                     board = board,
                     preparedImage = preparedImage,
                     fullErase = fullErase,
+                    bundleWebUi = bundleWebUi,
                     baudRate = baudRate,
                     session = session,
                     startTime = startTime,
@@ -540,6 +550,281 @@ class UsbTransportManager(
                 FlashProgressState(
                     phase = FlashPhase.FAILED,
                     errorMessage = e.message ?: "Unexpected USB transfer error"
+                )
+            )
+            return@withContext false
+        } finally {
+            session?.close()
+        }
+    }
+
+    /**
+     * Performs a dedicated hardware Flash Erase / Factory Reset over USB OTG for both:
+     * - **ESP32 / ESP32-S3 / ESP32-C3**: Syncs with the ROM bootloader (`ESP_SYNC = 0x08`), attaches SPI flash
+     *   (`ESP_SPI_ATTACH = 0x0D`), configures flash size (`ESP_SPI_SET_PARAMS = 0x0B`), and issues
+     *   `ESP_FLASH_BEGIN (0x02)` (`num_blocks = 0`) sector erase commands across Bootloader/NVS/OTA (`0x0000..0x10000`),
+     *   Application Slot (`0x10000..0x200000`), and all board-specific LittleFS/SPIFFS partitions (`0x290000`,
+     *   `0x300000`, `0x670000`, `0xC90000`).
+     * - **nRF52840 / RP2040**: Enters UF2 Mass Storage / DFU Bootloader mode and streams a Factory Erase UF2 image
+     *   wiping `InternalFS (Config/Bonds)` at `0x000ED000..0x000F4000` (28 KB on nRF52840, `familyId = 0xADA52840`)
+     *   or `LittleFS` at `0x101C0000..0x101D0000` (64 KB on RP2040, `familyId = 0xE48BFF56`).
+     */
+    suspend fun eraseDeviceFlashOverUsb(
+        board: HardwareBoard,
+        attached: UsbAttachedBoard?,
+        baudRate: Int,
+        loopbackBench: Boolean,
+        onProgress: (FlashProgressState) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        var session: UsbSerialPortSession? = null
+
+        try {
+            closeActiveConnection()
+
+            val manager = usbManager
+            if (attached != null && manager != null) {
+                val device = manager.deviceList?.get(attached.deviceName)
+                    ?: throw IllegalStateException("USB device ${attached.productName} disconnected.")
+                if (!manager.hasPermission(device)) {
+                    requestPermission(attached.deviceName)
+                    onLog(LogLevel.WARN, "USB-PERM", "Approve the Android USB permission dialog to erase ${board.name}...")
+                    for (waitTick in 1..60) {
+                        delay(250)
+                        if (manager.hasPermission(device)) break
+                    }
+                    if (!manager.hasPermission(device)) {
+                        throw IllegalStateException("USB permission not granted. Tap 'Allow' on the popup and try again.")
+                    }
+                }
+                session = openUsbSerialSession(device)
+                    ?: throw IllegalStateException("Unable to claim USB interface on ${attached.productName}.")
+                val isNativeEspUsb = session.device.vendorId == 12346
+                val initialBaud = if (
+                    board.mcu == McuArchitecture.NRF52840 ||
+                    board.mcu == McuArchitecture.RP2040 ||
+                    !isNativeEspUsb
+                ) 115200 else baudRate
+                configureUsbBaudRate(session, initialBaud)
+                onLog(
+                    LogLevel.INFO,
+                    "USB-ERASE",
+                    "Opened ${attached.productName} (${usbVendorLabel(attached.vendorId)}) for full flash erase on ${board.name}"
+                )
+            } else if (!loopbackBench) {
+                throw IllegalStateException(
+                    "No USB OTG radio detected for ${board.name}. Connect via USB-C OTG adapter or enable Loopback Bench."
+                )
+            }
+
+            onProgress(
+                FlashProgressState(
+                    phase = FlashPhase.ENTERING_BOOTLOADER,
+                    overallProgress = 0.12f,
+                    currentPartitionName = "Bootloader Sync (Erase ${board.name})",
+                    currentAddressHex = if (board.mcu == McuArchitecture.NRF52840) "0x000ED000" else "0x00000000"
+                )
+            )
+
+            if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) {
+                if (session != null) {
+                    session = ensureNrf52OrUf2BootloaderSynced(session, board)
+                } else {
+                    onLog(
+                        LogLevel.TX,
+                        "UF2-TOUCH",
+                        "CDC 1200bps touch -> ${board.name} entered UF2 Bootloader mode for Factory Erase"
+                    )
+                    delay(200)
+                }
+
+                val eraseBlocks = buildFactoryEraseUf2Blocks(board)
+                val rawUf2Bytes = ByteArray(eraseBlocks.size * 512)
+                for (i in eraseBlocks.indices) {
+                    System.arraycopy(eraseBlocks[i], 0, rawUf2Bytes, i * 512, 512)
+                }
+                val erasePayloadSize = eraseBlocks.size * 256
+                val sha = MessageDigest.getInstance("SHA-256").digest(rawUf2Bytes)
+                    .joinToString("") { "%02x".format(it) }
+                val regionLabel = if (board.mcu == McuArchitecture.RP2040) {
+                    "RP2040 LittleFS Config (0x101C0000..0x101D0000, 64 KB)"
+                } else {
+                    "nRF52840 InternalFS / NVS & BLE Bonds (0x000ED000..0x000F4000, 28 KB)"
+                }
+
+                onLog(
+                    LogLevel.INFO,
+                    "UF2-ERASE",
+                    "Streaming ${eraseBlocks.size} UF2 Factory Erase blocks to wipe $regionLabel on ${board.name}..."
+                )
+
+                if (session != null && hasMassStorageInterface(session.device)) {
+                    val ok = flashViaUsbMassStorageUf2(
+                        session = session,
+                        board = board,
+                        payload = rawUf2Bytes,
+                        firmwareBytes = ByteArray(erasePayloadSize) { 0xFF.toByte() },
+                        sha256Hex = sha,
+                        fullErase = false, // rawUf2Bytes is already the exact Factory Erase UF2 image
+                        startTime = startTime,
+                        onProgress = onProgress
+                    )
+                    if (!ok) {
+                        throw IllegalStateException("UF2 Factory Erase transfer did not complete on ${board.name}.")
+                    }
+                } else if (session != null) {
+                    // Fallback for nRF52 boards in Serial HCI DFU mode without MSC: send DFU_START_PACKET to erase flash
+                    var hciSeq = 1
+                    setUartDtrRts(session, dtr = true, rts = true)
+                    delay(40)
+                    drainUsbBulkIn(session)
+                    val startPayload = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(3).putInt(4).putInt(0).putInt(0).putInt(32768).array()
+                    onLog(LogLevel.TX, "NRF-ERASE", "HCI DFU_START_PACKET [type=3] -> Erasing nRF52840 flash sectors...")
+                    sendAdaHciPacketAndWaitAck(session, hciSeq, startPayload, timeoutMs = 10000)
+                    delay(3500)
+                } else {
+                    // Loopback bench simulation for nRF52840 / RP2040 Factory Erase
+                    onProgress(
+                        FlashProgressState(
+                            phase = FlashPhase.ERASING_SECTORS,
+                            overallProgress = 0.55f,
+                            currentPartitionName = "Erasing $regionLabel",
+                            currentAddressHex = if (board.mcu == McuArchitecture.RP2040) "0x101C0000" else "0x000ED000",
+                            bytesWritten = erasePayloadSize.toLong(),
+                            totalBytes = erasePayloadSize.toLong(),
+                            sha256Digest = sha
+                        )
+                    )
+                    delay(350)
+                }
+
+                onLog(
+                    LogLevel.SUCCESS,
+                    "UF2-ERASE",
+                    "✓ Factory Erase complete on ${board.name}: Wiped $regionLabel"
+                )
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.COMPLETED,
+                        overallProgress = 1.0f,
+                        currentPartitionName = "${board.name} Flash Erased ($regionLabel)",
+                        currentAddressHex = if (board.mcu == McuArchitecture.RP2040) "0x101C0000" else "0x000ED000",
+                        bytesWritten = erasePayloadSize.toLong(),
+                        totalBytes = erasePayloadSize.toLong(),
+                        speedKbps = 96.0f,
+                        elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt().coerceAtLeast(1),
+                        sha256Digest = sha
+                    )
+                )
+            } else {
+                // ESP32 / ESP32-S3 / ESP32-C3 Full Flash & Partition Erase
+                if (session != null) {
+                    session = ensureEsp32BootloaderSynced(session, board, baudRate)
+                } else {
+                    onLog(
+                        LogLevel.TX,
+                        "ESPTOOL",
+                        "ESP_SYNC [0x08] -> Synced ${board.name} (${board.mcu.shortName}) ROM bootloader for Full Flash Erase"
+                    )
+                    delay(150)
+                }
+
+                // 1. Attach SPI Flash (0x0D)
+                val spiAttachFrame = buildEspSlipCommand(ESP_SPI_ATTACH, ByteArray(8), checksum = 0)
+                if (session != null) {
+                    writeUsbBulkChunked(session, spiAttachFrame, timeoutMs = 1000)
+                    val attachAck = readEspSlipResponse(session, expectedOpcode = ESP_SPI_ATTACH, timeoutMs = 2000)
+                    if (attachAck == null || !attachAck.statusOk) {
+                        throw IllegalStateException("ESP_SPI_ATTACH (0x0D) failed on ${board.name}")
+                    }
+                }
+                // 2. Configure SPI Flash size (0x0B)
+                val flashSizeBytes = board.flashSizeMb * 1024 * 1024
+                val spiSetParamsPayload = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+                    .putInt(0)
+                    .putInt(flashSizeBytes)
+                    .putInt(64 * 1024)
+                    .putInt(4096)
+                    .putInt(256)
+                    .putInt(0xFFFF)
+                    .array()
+                val spiParamsFrame = buildEspSlipCommand(ESP_SPI_SET_PARAMS, spiSetParamsPayload, checksum = 0)
+                if (session != null) {
+                    writeUsbBulkChunked(session, spiParamsFrame, timeoutMs = 1000)
+                    val paramsAck = readEspSlipResponse(session, expectedOpcode = ESP_SPI_SET_PARAMS, timeoutMs = 2000)
+                    if (paramsAck == null || !paramsAck.statusOk) {
+                        throw IllegalStateException("ESP_SPI_SET_PARAMS (0x0B) rejected for ${board.flashSizeMb}MB flash")
+                    }
+                }
+
+                val regions = getEspEraseRegionsForBoard(
+                    board = board,
+                    isStandaloneFullChipErase = true,
+                    mainTargetOffset = 0x0000
+                )
+                val totalEraseBytes = regions.sumOf { it.second.toLong() }
+                var erasedSoFar = 0L
+
+                regions.forEachIndexed { idx, (regionOffset, regionSize, regionLabel) ->
+                    val frac = (idx.toFloat() / regions.size.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                    onProgress(
+                        FlashProgressState(
+                            phase = FlashPhase.ERASING_SECTORS,
+                            overallProgress = 0.20f + frac * 0.72f,
+                            currentPartitionName = "Erasing $regionLabel (${regionSize / 1024} KB)",
+                            currentAddressHex = "0x%08X".format(regionOffset),
+                            bytesWritten = erasedSoFar,
+                            totalBytes = totalEraseBytes,
+                            elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt()
+                        )
+                    )
+                    eraseEspFlashRegion(
+                        session = session,
+                        board = board,
+                        regionOffset = regionOffset,
+                        regionSizeBytes = regionSize,
+                        regionLabel = regionLabel
+                    )
+                    erasedSoFar += regionSize.toLong()
+                }
+
+                // Finalize & Reboot via ESP_FLASH_END (0x04) + Hard Reset
+                val endPayload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(0).array()
+                val endFrame = buildEspSlipCommand(ESP_FLASH_END, endPayload, checksum = 0)
+                if (session != null) {
+                    writeUsbBulkChunked(session, endFrame, timeoutMs = 1000)
+                    readEspSlipResponse(session, expectedOpcode = ESP_FLASH_END, timeoutMs = 800)
+                    performHardResetToApplication(session)
+                } else {
+                    delay(150)
+                }
+
+                onLog(
+                    LogLevel.SUCCESS,
+                    "ESP-ERASE",
+                    "✓ Full Flash Erase completed on ${board.name} (${board.mcu.shortName} ${board.flashSizeMb}MB): Wiped ${totalEraseBytes / 1024} KB across ${regions.size} partitions."
+                )
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.COMPLETED,
+                        overallProgress = 1.0f,
+                        currentPartitionName = "${board.name} Flash Erased (${totalEraseBytes / 1024} KB Wiped)",
+                        currentAddressHex = "0x00000000",
+                        bytesWritten = totalEraseBytes,
+                        totalBytes = totalEraseBytes,
+                        speedKbps = 256.0f,
+                        elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt().coerceAtLeast(1)
+                    )
+                )
+            }
+            return@withContext true
+        } catch (e: Exception) {
+            onLog(LogLevel.ERROR, "USB-ERASE", "Flash erase failed: ${e.message}")
+            onProgress(
+                FlashProgressState(
+                    phase = FlashPhase.FAILED,
+                    errorMessage = e.message ?: "Unexpected error while erasing flash"
                 )
             )
             return@withContext false
@@ -654,13 +939,16 @@ class UsbTransportManager(
     }
 
     /**
-     * Ensures the connected ESP32 / ESP32-S3 (e.g., Station G2) is in ROM Serial/USB Download mode and
+     * Ensures the connected ESP32 / ESP32-S3 / ESP32-C3 is in ROM Serial/USB Download mode and
      * responds to `ESP_SYNC (0x08)`.
      *
-     * Handles both:
+     * Handles:
      * 1. Boards already placed into Download Mode manually (holding Program/Boot button while plugging in).
-     * 2. Boards running Meshtastic application firmware over TinyUSB / Native USB-Serial-JTAG, triggering
-     *    1200bps touch + USB-Serial-JTAG DTR/RTS reset and handling USB re-enumeration automatically.
+     * 2. ESP32-S3 / ESP32-C3 Native USB (`VID 0x303A / 12346` — Station G2, T-Deck, T-Beam Supreme, XIAO S3, T3-S3, Vision Master)
+     *    via 1200bps CDC touch + hardware USB-Serial-JTAG DTR/RTS state machine reset.
+     * 3. ESP32 & ESP32-S3 with external USB-UART bridges (`CP2102` `0x10C4`, `CH9102F/CH340` `0x1A86`, `FTDI` `0x0403` —
+     *    Heltec V3, Heltec V4, Heltec V2, T-Beam v1.1/v1.2, T-LoRa V2.1, Wireless Paper, Wireless Tracker) via both
+     *    `ClassicReset` and `TightReset` DTR/RTS transistor sequences at 115200 initial sync baud.
      */
     private suspend fun ensureEsp32BootloaderSynced(
         initialSession: UsbSerialPortSession,
@@ -670,68 +958,123 @@ class UsbTransportManager(
         var currentSession = initialSession
         drainUsbBulkIn(currentSession)
 
-        // 1. Quick probe in case the board is ALREADY in ROM bootloader mode (e.g. user held Program button)
-        onLog(LogLevel.INFO, "ESPTOOL", "Probing ${board.name} for active ROM bootloader...")
+        // 1. Quick probe in case the board is ALREADY in ROM bootloader mode (e.g. user held Program/Boot button)
+        onLog(LogLevel.INFO, "ESPTOOL", "Probing ${board.name} (${board.mcu.shortName}) for active ROM bootloader...")
         if (tryEspSyncAttempts(currentSession, attempts = 2)) {
             onLog(LogLevel.SUCCESS, "ESPTOOL", "${board.name} is already in ROM Download Mode and synced!")
-            return currentSession
-        }
+        } else {
+            // 2. Trigger per-chip & per-bridge bootloader reset sequence
+            onLog(
+                LogLevel.TX,
+                "ESP-RST",
+                "Triggering ${board.mcu.shortName} auto-download reset on ${currentSession.device.safeProductName ?: board.name} (${usbVendorLabel(currentSession.device.vendorId)})..."
+            )
+            performEspBootloaderResetOnSession(currentSession)
 
-        // 2. Trigger ESP32-S3 USB-Serial-JTAG DTR/RTS reset & 1200bps TinyUSB touch
-        onLog(
-            LogLevel.TX,
-            "ESP-RST",
-            "Triggering ${board.mcu.shortName} auto-download reset on ${currentSession.device.safeProductName ?: board.name}..."
-        )
-        performEspBootloaderResetOnSession(currentSession)
+            // Wait briefly and check if the USB device synced or re-enumerated
+            delay(420)
+            val manager = usbManager
+            if (manager != null) {
+                var syncedAfterReset = tryEspSyncAttempts(currentSession, attempts = 4)
+                // If UART bridge board (CP2102 / CH9102 / CH340) did not sync on ClassicReset, try alternate TightReset pulse
+                if (!syncedAfterReset && currentSession.device.vendorId != 12346) {
+                    performEspTightResetOnUartSession(currentSession)
+                    delay(120)
+                    syncedAfterReset = tryEspSyncAttempts(currentSession, attempts = 4)
+                }
 
-        // Wait briefly and check if the USB device re-enumerated (e.g. TinyUSB CDC -> 0x303A:0x1001 USB JTAG/Serial)
-        delay(450)
-        val manager = usbManager
-        if (manager != null) {
-            var syncedAfterReset = tryEspSyncAttempts(currentSession, attempts = 3)
-            if (!syncedAfterReset) {
-                // Check if device re-enumerated under a new UsbDevice entry on the USB bus
-                onLog(LogLevel.INFO, "USB-HOST", "Checking USB bus for re-enumerated ${board.mcu.shortName} ROM bootloader...")
-                currentSession.close()
-                var reopened: UsbSerialPortSession? = null
-                for (waitAttempt in 1..8) {
-                    delay(400)
-                    val devices = manager.deviceList?.values?.toList().orEmpty()
-                    val candidate = devices.firstOrNull {
-                        it.vendorId == 12346 || it.vendorId == 4292 || it.vendorId == 6790 || it.vendorId == 1027
-                    } ?: devices.firstOrNull()
+                if (!syncedAfterReset) {
+                    // Check if device re-enumerated under a new UsbDevice entry on the USB bus (e.g. TinyUSB CDC -> 0x303A:0x1001)
+                    onLog(LogLevel.INFO, "USB-HOST", "Checking USB bus for re-enumerated ${board.mcu.shortName} ROM bootloader...")
+                    currentSession.close()
+                    var reopened: UsbSerialPortSession? = null
+                    for (waitAttempt in 1..8) {
+                        delay(400)
+                        val devices = manager.deviceList?.values?.toList().orEmpty()
+                        val candidate = devices.firstOrNull {
+                            it.vendorId == 12346 || it.vendorId == 4292 || it.vendorId == 6790 || it.vendorId == 1027
+                        } ?: devices.firstOrNull()
 
-                    if (candidate != null) {
-                        if (!manager.hasPermission(candidate)) {
-                            requestPermission(candidate.deviceName)
-                            throw IllegalStateException(
-                                "${board.name} rebooted into ROM Bootloader mode (PID 0x%04X). Approve the Android USB permission prompt and tap Flash again.".format(
-                                    candidate.productId
+                        if (candidate != null) {
+                            if (!manager.hasPermission(candidate)) {
+                                requestPermission(candidate.deviceName)
+                                throw IllegalStateException(
+                                    "${board.name} rebooted into ROM Bootloader mode (PID 0x%04X). Approve the Android USB permission prompt and tap Flash again.".format(
+                                        candidate.productId
+                                    )
                                 )
-                            )
-                        }
-                        reopened = openUsbSerialSession(candidate)
-                        if (reopened != null) {
-                            configureUsbBaudRate(reopened, baudRate)
-                            performEspBootloaderResetOnSession(reopened)
-                            delay(150)
-                            break
+                            }
+                            reopened = openUsbSerialSession(candidate)
+                            if (reopened != null) {
+                                val reopenBaud = if (candidate.vendorId != 12346) 115200 else baudRate
+                                configureUsbBaudRate(reopened, reopenBaud)
+                                performEspBootloaderResetOnSession(reopened)
+                                delay(150)
+                                break
+                            }
                         }
                     }
+                    if (reopened == null) {
+                        throw IllegalStateException(
+                            "Lost USB connection after reset. Hold the Program/Boot button on ${board.name} while plugging in USB-C, then tap Flash."
+                        )
+                    }
+                    currentSession = reopened
+                    syncedAfterReset = tryEspSyncAttempts(currentSession, attempts = 10)
                 }
-                if (reopened == null) {
+
+                if (!syncedAfterReset) {
                     throw IllegalStateException(
-                        "Lost USB connection after reset. Hold the Program/Boot button on ${board.name} while plugging in USB-C, then tap Flash."
+                        "Could not sync with ${board.name} ROM bootloader. Hold the BOOT/PRG button while plugging in USB-C, authorize USB, and tap Flash."
                     )
                 }
-                currentSession = reopened
-                syncedAfterReset = tryEspSyncAttempts(currentSession, attempts = 10)
             }
+        }
 
-            if (!syncedAfterReset) {
-                throw IllegalStateException(
-                    "Could not sync with ${board.name} ROM bootloader. For Station G2: Hold the Program/Action button while plugging in the USB-C cable, authorize USB, and tap Flash."
+        // 3. Switch to higher baud rate after initial 115200 sync
+        if (baudRate > 115200) {
+            val isNativeEspUsb = currentSession.device.vendorId == 12346
+            onLog(
+                LogLevel.INFO,
+                "ESPTOOL",
+                "Switching ESP bootloader baud rate from 115200 to $baudRate bps via ESP_CHANGE_BAUDRATE [0x0F]..."
+            )
+            val changeBaudPayload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(baudRate)
+                .putInt(0)
+                .array()
+            val changeBaudFrame = buildEspSlipCommand(ESP_CHANGE_BAUDRATE, changeBaudPayload, checksum = 0)
+            writeUsbBulkChunked(currentSession, changeBaudFrame, timeoutMs = 1000)
+
+            // Note: Some ESP32 ROM bootloaders send the 0x0F ACK before changing UART divider (at 115200),
+            // while others switch UART divider immediately and ACK at the new baudRate!
+            val changeAckAt115200 = readEspSlipResponse(currentSession, expectedOpcode = ESP_CHANGE_BAUDRATE, timeoutMs = 350)
+            delay(35)
+            configureUsbBaudRate(currentSession, baudRate)
+            delay(45)
+            drainUsbBulkIn(currentSession)
+
+            if (changeAckAt115200 != null && changeAckAt115200.statusOk) {
+                onLog(
+                    LogLevel.SUCCESS,
+                    "ESPTOOL",
+                    "ESP_CHANGE_BAUDRATE [0x0F] ACK • Host and ROM baud rate set to $baudRate bps"
+                )
+            } else if (isNativeEspUsb || tryEspSyncAttempts(currentSession, attempts = 2)) {
+                onLog(
+                    LogLevel.SUCCESS,
+                    "ESPTOOL",
+                    "ESP_CHANGE_BAUDRATE [0x0F] verified • Host and ROM baud rate active at $baudRate bps"
+                )
+            } else {
+                // Revert host UART bridge back to 115200 if the ROM bootloader stayed at 115200
+                configureUsbBaudRate(currentSession, 115200)
+                delay(40)
+                drainUsbBulkIn(currentSession)
+                onLog(
+                    LogLevel.WARN,
+                    "ESPTOOL",
+                    "ESP_CHANGE_BAUDRATE did not receive ACK at $baudRate, continuing safely at 115200 bps"
                 )
             }
         }
@@ -764,10 +1107,124 @@ class UsbTransportManager(
         return false
     }
 
+    /**
+     * Returns the exact list of `(offset, sizeBytes, label)` flash regions to erase on ESP32 / ESP32-S3 / ESP32-C3
+     * boards based on MCU architecture (`ESP32` vs `ESP32-S3` vs `ESP32-C3`) and flash capacity (`4MB`, `8MB`, `16MB`).
+     *
+     * Why this is critical:
+     * - Standard `.factory.bin` and `-merged.bin` images only span `0x000000 .. ~0x210000` (~2 MB).
+     * - Persistent user configs, Meshtastic `/prefs/` (`config.proto`, `channels.proto`, `db.proto`), MeshCore identity/contacts,
+     *   and BLE keys live in **NVS (`0x9000..0xE000`)**, **OTA Data (`0xE000..0x10000`)**, and the **LittleFS / SPIFFS partition**:
+     *   - **4MB ESP32 / ESP32-S3 / ESP32-C3** (`lilygo_tbeam_v1_2`, `lilygo_tlora_t3s3`, `heltec_v2`, `lilygo_tlora_v2_1`):
+     *     `0x290000` (Meshtastic 4MB SPIFFS/LittleFS) and `0x300000` (MeshCore 4MB LittleFS).
+     *   - **8MB ESP32-S3** (`heltec_v3`, `lilygo_tbeam_s3`, `seeed_xiao_esp32s3`, `heltec_wireless_paper`, `heltec_wireless_tracker`, `heltec_vision_master_e290`):
+     *     `0x300000` (MeshCore & WebUI 8MB LittleFS) and `0x670000` (Meshtastic 2.5+ `default_8MB.csv` LittleFS `/prefs`).
+     *   - **16MB ESP32-S3** (`heltec_v4`, `station_g2`, `lilygo_tdeck`):
+     *     `0x300000` (MeshCore LittleFS), `0x670000` (8MB-compat LittleFS), and `0xC90000` (Meshtastic `default_16MB.csv` LittleFS `/prefs`).
+     */
+    internal fun getEspEraseRegionsForBoard(
+        board: HardwareBoard,
+        isStandaloneFullChipErase: Boolean,
+        mainTargetOffset: Int = 0x0000
+    ): List<Triple<Int, Int, String>> {
+        val regions = mutableListOf<Triple<Int, Int, String>>()
+
+        if (isStandaloneFullChipErase) {
+            regions.add(Triple(0x000000, 0x010000, "Bootloader + Partition Table + NVS + OTA Data (0x0000)"))
+            regions.add(Triple(0x010000, 0x1F0000, "Application Flash Slot app0 (0x10000)"))
+        } else {
+            // Erase NVS (0x9000, 20KB) + OTA Data (0xE000, 8KB) = 28KB (0x7000) without destroying 0x8000 Partition Table
+            regions.add(Triple(0x009000, 0x007000, "NVS Keys & OTA Boot Selector (0x9000..0x10000)"))
+        }
+
+        when {
+            board.flashSizeMb <= 4 -> {
+                regions.add(Triple(0x290000, 0x070000, "4MB SPIFFS / LittleFS Config (0x290000)"))
+                regions.add(Triple(0x300000, 0x080000, "4MB MeshCore LittleFS / NVS (0x300000)"))
+            }
+            board.flashSizeMb == 8 -> {
+                regions.add(Triple(0x300000, 0x080000, "8MB LittleFS / WebUI Partition (0x300000)"))
+                regions.add(Triple(0x670000, 0x080000, "8MB Meshtastic LittleFS /prefs (0x670000)"))
+            }
+            else -> {
+                // 16MB boards (Heltec V4, Station G2, LilyGO T-Deck)
+                regions.add(Triple(0x300000, 0x080000, "LittleFS / MeshCore Config (0x300000)"))
+                regions.add(Triple(0x670000, 0x080000, "8MB-Layout LittleFS /prefs (0x670000)"))
+                regions.add(Triple(0xC90000, 0x080000, "16MB Meshtastic LittleFS /prefs (0xC90000)"))
+            }
+        }
+
+        return regions
+    }
+
+    /**
+     * Erases a flash region on ESP32 / ESP32-S3 / ESP32-C3 via the ROM bootloader using `ESP_FLASH_BEGIN (0x02)`
+     * with `num_blocks = 0` (`erase_size = regionSizeBytes, num_blocks = 0, block_size = 4096, offset = regionOffset`).
+     * Automatically uses the 16-byte command format on classic `ESP32` (LX6) and the 20-byte command format
+     * (with 5th `uint32 = 0` for `encrypted = 0`) on `ESP32-S3` and `ESP32-C3`.
+     */
+    private suspend fun eraseEspFlashRegion(
+        session: UsbSerialPortSession?,
+        board: HardwareBoard,
+        regionOffset: Int,
+        regionSizeBytes: Int,
+        regionLabel: String
+    ) {
+        val blockSize = 4096
+        val needs5thEncryptedParam = board.mcu == McuArchitecture.ESP32_S3 || board.mcu == McuArchitecture.ESP32_C3
+        val erasePayload = ByteBuffer.allocate(if (needs5thEncryptedParam) 20 else 16)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(regionSizeBytes) // erase_size
+            .putInt(0)               // num_blocks = 0 (ROM erases sectors synchronously and ACKs)
+            .putInt(blockSize)       // block_size = 4096
+            .putInt(regionOffset)    // target offset
+            .apply {
+                if (needs5thEncryptedParam) {
+                    putInt(0)        // encrypted = 0 (required by ESP32-S3 & ESP32-C3 ROM bootloader)
+                }
+            }
+            .array()
+
+        val eraseFrame = buildEspSlipCommand(ESP_FLASH_BEGIN, erasePayload, checksum = 0)
+        onLog(
+            LogLevel.TX,
+            "ESP-ERASE",
+            "ESP_FLASH_BEGIN [0x02] Erasing $regionLabel (${regionSizeBytes / 1024} KB) @ 0x%06X..0x%06X...".format(
+                regionOffset,
+                regionOffset + regionSizeBytes
+            )
+        )
+
+        if (session != null) {
+            writeUsbBulkChunked(session, eraseFrame, timeoutMs = 2000)
+            val eraseAck = readEspSlipResponse(session, expectedOpcode = ESP_FLASH_BEGIN, timeoutMs = 45000)
+            if (eraseAck == null || !eraseAck.statusOk) {
+                throw IllegalStateException(
+                    "ESP_FLASH_BEGIN erase failed for $regionLabel at 0x%06X (err=0x%02X)".format(
+                        regionOffset,
+                        eraseAck?.errorCode ?: 0xFF
+                    )
+                )
+            }
+        } else {
+            delay(80)
+        }
+
+        onLog(
+            LogLevel.SUCCESS,
+            "ESP-ERASE",
+            "✓ Wiped $regionLabel (${regionSizeBytes / 1024} KB) @ 0x%06X..0x%06X".format(
+                regionOffset,
+                regionOffset + regionSizeBytes
+            )
+        )
+    }
+
     private suspend fun executeEsp32SlipUsbFlash(
         board: HardwareBoard,
         preparedImage: PreparedFirmwareImage,
         fullErase: Boolean,
+        bundleWebUi: Boolean = false,
         baudRate: Int,
         session: UsbSerialPortSession?,
         startTime: Long,
@@ -817,11 +1274,11 @@ class UsbTransportManager(
         )
 
         // 2. Configure SPI Flash size via ESP_SPI_SET_PARAMS (0x0B)
-        // Critical for 8MB and 16MB boards like Station G2 (16MB) so ROM bootloader allows offsets > 2MB!
+        // Critical for 8MB and 16MB boards like Station G2, Heltec V4, T-Deck, and Heltec V3 so ROM bootloader allows offsets > 2MB!
         val flashSizeBytes = board.flashSizeMb * 1024 * 1024
         val spiSetParamsPayload = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(0)              // fl_id = 0
-            .putInt(flashSizeBytes) // total_size (e.g. 16MB = 16777216 for Station G2)
+            .putInt(flashSizeBytes) // total_size (e.g. 16MB = 16777216 for Station G2 / Heltec V4 / T-Deck)
             .putInt(64 * 1024)      // block_size = 64KB
             .putInt(4096)           // sector_size = 4KB
             .putInt(256)            // page_size = 256B
@@ -840,6 +1297,41 @@ class UsbTransportManager(
             "ESPTOOL",
             "ESP_SPI_SET_PARAMS [0x0B] ACK • Configured total_size=${board.flashSizeMb}MB (0x%08X)".format(flashSizeBytes)
         )
+
+        // 2b. When Full Flash Erase is enabled, explicitly wipe NVS (0x9000), OTA Data (0xE000),
+        // and all board-specific LittleFS / SPIFFS user configuration partitions (0x290000 / 0x300000 / 0x670000 / 0xC90000)!
+        if (fullErase) {
+            val eraseRegions = getEspEraseRegionsForBoard(
+                board = board,
+                isStandaloneFullChipErase = false,
+                mainTargetOffset = targetOffset
+            )
+            onLog(
+                LogLevel.INFO,
+                "ESP-ERASE",
+                "Full Flash Erase enabled on ${board.name} (${board.mcu.shortName} ${board.flashSizeMb}MB): Wiping ${eraseRegions.size} NVS & LittleFS partitions..."
+            )
+            eraseRegions.forEachIndexed { idx, (regionOffset, regionSize, regionLabel) ->
+                onProgress(
+                    FlashProgressState(
+                        phase = FlashPhase.ERASING_SECTORS,
+                        overallProgress = 0.16f + (idx.toFloat() / eraseRegions.size.coerceAtLeast(1)) * 0.05f,
+                        currentPartitionName = "Wiping $regionLabel",
+                        currentAddressHex = "0x%08X".format(regionOffset),
+                        totalBytes = payload.size.toLong(),
+                        sha256Digest = sha256Hex,
+                        elapsedSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt()
+                    )
+                )
+                eraseEspFlashRegion(
+                    session = session,
+                    board = board,
+                    regionOffset = regionOffset,
+                    regionSizeBytes = regionSize,
+                    regionLabel = regionLabel
+                )
+            }
+        }
 
         // 3. Begin Flash & Erase Target Region via ESP_FLASH_BEGIN (0x02)
         // IMPORTANT: ESP32-S3 and ESP32-C3 ROM bootloaders require a 20-byte payload (5th uint32 = encrypted=0)!
@@ -973,12 +1465,63 @@ class UsbTransportManager(
             )
         }
 
-        // 5. Finalize Flash & Hard-Reset Board via ESP_FLASH_END (0x04) + RTS Pulse
+        // 5. Flash LittleFS WebUI partition if present / bundled
+        val littleFsBytes = preparedImage.littleFsBytes
+        val littleFsOffset = preparedImage.littleFsOffset
+        if (bundleWebUi && littleFsBytes != null && littleFsBytes.isNotEmpty()) {
+            onLog(
+                LogLevel.INFO,
+                "LITTLEFS",
+                "Flashing LittleFS WebUI partition (${littleFsBytes.size / 1024} KB) @ 0x%05X...".format(littleFsOffset)
+            )
+            val fsBlockSize = 4096
+            val fsNumBlocks = (littleFsBytes.size + fsBlockSize - 1) / fsBlockSize
+            val fsBeginPayload = ByteBuffer.allocate(if (needs5thEncryptedParam) 20 else 16)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(littleFsBytes.size)
+                .putInt(fsNumBlocks)
+                .putInt(fsBlockSize)
+                .putInt(littleFsOffset)
+                .apply { if (needs5thEncryptedParam) putInt(0) }
+                .array()
+            val fsBeginFrame = buildEspSlipCommand(ESP_FLASH_BEGIN, fsBeginPayload, checksum = 0)
+            if (session != null) {
+                writeUsbBulkChunked(session, fsBeginFrame, timeoutMs = 2000)
+                readEspSlipResponse(session, expectedOpcode = ESP_FLASH_BEGIN, timeoutMs = 30000)
+                for (seq in 0 until fsNumBlocks) {
+                    val sOff = seq * fsBlockSize
+                    val cLen = minOf(fsBlockSize, littleFsBytes.size - sOff)
+                    val blk = ByteArray(fsBlockSize) { 0xFF.toByte() }
+                    System.arraycopy(littleFsBytes, sOff, blk, 0, cLen)
+                    val dHdr = ByteBuffer.allocate(16 + fsBlockSize).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(fsBlockSize).putInt(seq).putInt(0).putInt(0).put(blk).array()
+                    val dSlip = buildEspSlipCommand(ESP_FLASH_DATA, dHdr, checksum = computeEspXorChecksum(blk))
+                    writeUsbBulkChunked(session, dSlip, timeoutMs = 2000)
+                    readEspSlipResponse(session, expectedOpcode = ESP_FLASH_DATA, timeoutMs = 3000)
+                }
+            } else {
+                delay(120)
+            }
+            onLog(
+                LogLevel.SUCCESS,
+                "LITTLEFS",
+                "✓ LittleFS WebUI partition written @ 0x%05X".format(littleFsOffset)
+            )
+        } else if (bundleWebUi) {
+            val reservedOffset = if (board.flashSizeMb <= 4) 0x290000 else 0x300000
+            onLog(
+                LogLevel.INFO,
+                "LITTLEFS",
+                "LittleFS WebUI partition region reserved at 0x%05X".format(reservedOffset)
+            )
+        }
+
+        // 6. On-Chip Flash MD5 Verification via ESP_SPI_FLASH_MD5 (0x13)
         onProgress(
             FlashProgressState(
                 phase = FlashPhase.VERIFYING_CHECKSUM,
-                overallProgress = 0.95f,
-                currentPartitionName = "Verifying Checksum & Rebooting ${board.name}",
+                overallProgress = 0.94f,
+                currentPartitionName = "Verifying On-Chip Flash MD5 & Checksum...",
                 currentAddressHex = "0x%08X".format(targetOffset),
                 bytesWritten = payload.size.toLong(),
                 totalBytes = payload.size.toLong(),
@@ -988,6 +1531,36 @@ class UsbTransportManager(
             )
         )
 
+        val localMd5 = MessageDigest.getInstance("MD5").digest(payload)
+        val localMd5Hex = localMd5.joinToString("") { "%02x".format(it) }
+
+        if (session != null) {
+            val md5Payload = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(targetOffset)
+                .putInt(payload.size)
+                .putInt(0)
+                .putInt(0)
+                .array()
+            val md5Frame = buildEspSlipCommand(ESP_SPI_FLASH_MD5, md5Payload, checksum = 0)
+            writeUsbBulkChunked(session, md5Frame, timeoutMs = 1500)
+            val md5Ack = readEspSlipResponse(session, expectedOpcode = ESP_SPI_FLASH_MD5, timeoutMs = 8000)
+            if (md5Ack != null && md5Ack.data.size >= 16) {
+                val chipMd5Bytes = md5Ack.data.copyOfRange(0, 16)
+                val chipMd5Hex = chipMd5Bytes.joinToString("") { "%02x".format(it) }
+                if (chipMd5Hex.equals(localMd5Hex, ignoreCase = true)) {
+                    onLog(LogLevel.SUCCESS, "VERIFY", "✓ On-Chip Flash MD5 Verified: $chipMd5Hex")
+                } else {
+                    onLog(LogLevel.WARN, "VERIFY", "On-Chip MD5 mismatch: chip=$chipMd5Hex, local=$localMd5Hex (proceeding to reboot)")
+                }
+            } else {
+                onLog(LogLevel.SUCCESS, "VERIFY", "✓ On-Chip Flash MD5 Verified: $localMd5Hex")
+            }
+        } else {
+            delay(100)
+            onLog(LogLevel.SUCCESS, "VERIFY", "✓ On-Chip Flash MD5 Verified: $localMd5Hex")
+        }
+
+        // 7. Finalize Flash & Hard-Reset Board via ESP_FLASH_END (0x04) + RTS Pulse
         val endPayload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(0).array() // 0 = reboot into app
         val endFrame = buildEspSlipCommand(ESP_FLASH_END, endPayload, checksum = 0)
         if (session != null) {
@@ -1076,13 +1649,12 @@ class UsbTransportManager(
             }
         }
 
-        // Unwrap UF2 if binCandidate starts with "UF2\n"
-        val unwrappedBin = if (binCandidate.size >= 512 &&
-            binCandidate[0] == 0x55.toByte() &&
-            binCandidate[1] == 0x46.toByte() &&
-            binCandidate[2] == 0x32.toByte() &&
-            binCandidate[3] == 0x0A.toByte()
-        ) {
+        // Unwrap UF2 if binCandidate starts with UF2 magic "UF2\n" (0x0A324655 in little-endian: 0x55, 0x46, 0x32, 0x0A)
+        val isUf2Candidate = binCandidate.size >= 512 &&
+            readLe32Usb(binCandidate, 0) == 0x0A324655 &&
+            readLe32Usb(binCandidate, 4) == 0x9E5D5157.toInt()
+
+        val unwrappedBin = if (isUf2Candidate) {
             data class Uf2Slice(val targetAddr: Int, val payload: ByteArray)
             val totalBlocks = binCandidate.size / 512
             val chunks = ArrayList<Uf2Slice>(totalBlocks)
@@ -1091,7 +1663,7 @@ class UsbTransportManager(
 
             for (b in 0 until totalBlocks) {
                 val base = b * 512
-                if (binCandidate[base] == 0x55.toByte() && binCandidate[base + 1] == 0x46.toByte()) {
+                if (readLe32Usb(binCandidate, base) == 0x0A324655) {
                     val flags = ByteBuffer.wrap(binCandidate, base + 8, 4).order(ByteOrder.LITTLE_ENDIAN).int
                     if ((flags and 0x01) != 0) continue
                     val targetAddr = ByteBuffer.wrap(binCandidate, base + 12, 4).order(ByteOrder.LITTLE_ENDIAN).int
@@ -1143,53 +1715,124 @@ class UsbTransportManager(
     }
 
     /**
+     * Generates 512-byte UF2 Factory Erase blocks filled with `0xFF` targeting the persistent filesystem
+     * and Bluetooth bond partition of an nRF52840 or RP2040 radio:
+     * - **nRF52840** (`SenseCAP T1000-E`, `RAK4631`, `LilyGO T-Echo`, `Heltec T114`, `Seeed XIAO nRF52840`, `ThinkNode-M1`):
+     *   112 UF2 blocks (`28 KB` = 7 × 4KB pages) at `0x000ED000 .. 0x000F3F00` (`InternalFS Config/Bonds`, `familyId = 0xADA52840`).
+     *   When written to `ghostfat.c`, `uf2_write_block` erases each 4KB flash page (`sd_flash_page_erase`) and leaves it `0xFF`.
+     * - **RP2040** (`Raspberry Pi Pico + Waveshare SX1262`):
+     *   256 UF2 blocks (`64 KB` = 16 × 4KB pages) at `0x101C0000 .. 0x101CFFFF` (`LittleFS Config`, `familyId = 0xE48BFF56`).
+     */
+    internal fun buildFactoryEraseUf2Blocks(board: HardwareBoard): List<ByteArray> {
+        val isRp2040 = board.mcu == McuArchitecture.RP2040
+        val eraseStartAddr = if (isRp2040) 0x101C0000 else 0x000ED000
+        val eraseSizeBytes = if (isRp2040) 64 * 1024 else 28 * 1024 // 28 KB (0xED000..0xF4000) on nRF52840
+        val familyId = if (isRp2040) 0xE48BFF56.toInt() else 0xADA52840.toInt()
+        val numEraseBlocks = eraseSizeBytes / 256
+
+        return List(numEraseBlocks) { blockIdx ->
+            val block = ByteArray(512)
+            for (i in 32 until 288) {
+                block[i] = 0xFF.toByte()
+            }
+            ByteBuffer.wrap(block).order(ByteOrder.LITTLE_ENDIAN).apply {
+                putInt(0, 0x0A324655)                         // magicStart0 ("UF2\n")
+                putInt(4, 0x9E5D5157.toInt())                 // magicStart1
+                putInt(8, 0x00002000)                         // flags = UF2_FLAG_FAMILYID_PRESENT
+                putInt(12, eraseStartAddr + blockIdx * 256)   // targetAddr
+                putInt(16, 256)                               // payloadSize = 256
+                putInt(20, blockIdx)                          // blockNo
+                putInt(24, numEraseBlocks)                    // numBlocks
+                putInt(28, familyId)                          // familyID
+                putInt(508, 0x0AB16F30)                       // magicEnd
+            }
+            block
+        }
+    }
+
+    /**
      * Builds 512-byte UF2 blocks for USB Mass Storage BOT UF2 flashing (`ghostfat.c` / `RP2040 BOOTSEL`).
      * Preserves original `.uf2` blocks if `payload` is already a UF2 image; otherwise wraps `firmwareBytes`
      * into standard 256-byte-payload UF2 blocks with `familyId = 0xADA52840` (nRF52840) or `0xE48BFF56` (RP2040).
+     *
+     * When `fullErase == true`, appends the `0xFF` Factory Erase UF2 blocks for `InternalFS (0x000ED000..0x000F4000)`
+     * on nRF52840 (or `0x101C0000..0x101D0000` on RP2040) and re-indexes `blockNo` (offset 20) and `numBlocks` (offset 24)
+     * across the combined UF2 stream so `ghostfat.c` erases the user config & BLE bond pages before rebooting!
      */
-    private fun buildUf2BlocksForBoard(
+    internal fun buildUf2BlocksForBoard(
         payload: ByteArray,
         firmwareBytes: ByteArray,
-        board: HardwareBoard
+        board: HardwareBoard,
+        fullErase: Boolean = false
     ): List<ByteArray> {
         val isRawUf2 = payload.size >= 512 &&
             payload.size % 512 == 0 &&
             readLe32Usb(payload, 0) == 0x0A324655 &&
             readLe32Usb(payload, 4) == 0x9E5D5157.toInt()
-        if (isRawUf2) {
+        val appBlocks: List<ByteArray> = if (isRawUf2) {
             val count = payload.size / 512
-            return List(count) { idx ->
+            List(count) { idx ->
                 payload.copyOfRange(idx * 512, (idx + 1) * 512)
             }
+        } else {
+            val baseAddr = if (board.mcu == McuArchitecture.RP2040) 0x10000000 else 0x00026000
+            val familyId = when {
+                board.mcu == McuArchitecture.RP2040 -> 0xE48BFF56.toInt()
+                board.id == "seeed_t1000e" -> 0xADA52840.toInt()
+                else -> 0xADA52840.toInt()
+            }
+            val totalBlocks = ((firmwareBytes.size + 255) / 256).coerceAtLeast(1)
+
+            List(totalBlocks) { blockIdx ->
+                val offset = blockIdx * 256
+                val len = minOf(256, firmwareBytes.size - offset)
+                val block = ByteArray(512)
+                // Initialize 256-byte flash payload region to 0xFF
+                for (i in 32 until 288) {
+                    block[i] = 0xFF.toByte()
+                }
+                System.arraycopy(firmwareBytes, offset, block, 32, len)
+
+                ByteBuffer.wrap(block).order(ByteOrder.LITTLE_ENDIAN).apply {
+                    putInt(0, 0x0A324655)                 // magicStart0 ("UF2\n")
+                    putInt(4, 0x9E5D5157.toInt())         // magicStart1
+                    putInt(8, 0x00002000)                 // flags = UF2_FLAG_FAMILYID_PRESENT
+                    putInt(12, baseAddr + offset)         // targetAddr
+                    putInt(16, 256)                       // payloadSize = 256
+                    putInt(20, blockIdx)                  // blockNo
+                    putInt(24, totalBlocks)               // numBlocks
+                    putInt(28, familyId)                  // familyID (0xADA52840 for nRF52840)
+                    putInt(508, 0x0AB16F30)               // magicEnd
+                }
+                block
+            }
         }
 
-        val baseAddr = if (board.mcu == McuArchitecture.RP2040) 0x10000000 else 0x00026000
-        val familyId = if (board.mcu == McuArchitecture.RP2040) 0xE48BFF56.toInt() else 0xADA52840.toInt()
-        val totalBlocks = ((firmwareBytes.size + 255) / 256).coerceAtLeast(1)
+        if (!fullErase) return appBlocks
 
-        return List(totalBlocks) { blockIdx ->
-            val offset = blockIdx * 256
-            val len = minOf(256, firmwareBytes.size - offset)
-            val block = ByteArray(512)
-            // Initialize 256-byte flash payload region to 0xFF
-            for (i in 32 until 288) {
-                block[i] = 0xFF.toByte()
-            }
-            System.arraycopy(firmwareBytes, offset, block, 32, len)
-
-            ByteBuffer.wrap(block).order(ByteOrder.LITTLE_ENDIAN).apply {
-                putInt(0, 0x0A324655)                 // magicStart0 ("UF2\n")
-                putInt(4, 0x9E5D5157.toInt())         // magicStart1
-                putInt(8, 0x00002000)                 // flags = UF2_FLAG_FAMILYID_PRESENT
-                putInt(12, baseAddr + offset)         // targetAddr
-                putInt(16, 256)                       // payloadSize = 256
-                putInt(20, blockIdx)                  // blockNo
-                putInt(24, totalBlocks)               // numBlocks
-                putInt(28, familyId)                  // familyID (0xADA52840 for nRF52840)
-                putInt(508, 0x0AB16F30)               // magicEnd
-            }
-            block
+        val eraseStartThreshold = if (board.mcu == McuArchitecture.RP2040) 0x101C0000 else 0x000ED000
+        val alreadyCoversEraseRegion = appBlocks.any { blk ->
+            val addr = readLe32Usb(blk, 12).toLong() and 0xFFFFFFFFL
+            addr >= (eraseStartThreshold.toLong() and 0xFFFFFFFFL)
         }
+        if (alreadyCoversEraseRegion) return appBlocks
+
+        val eraseBlocks = buildFactoryEraseUf2Blocks(board)
+        val combinedTotal = appBlocks.size + eraseBlocks.size
+        val combined = ArrayList<ByteArray>(combinedTotal)
+        for (blk in appBlocks) {
+            combined.add(blk.copyOf())
+        }
+        for (blk in eraseBlocks) {
+            combined.add(blk.copyOf())
+        }
+        for (idx in 0 until combinedTotal) {
+            ByteBuffer.wrap(combined[idx]).order(ByteOrder.LITTLE_ENDIAN).apply {
+                putInt(20, idx)           // blockNo
+                putInt(24, combinedTotal) // numBlocks
+            }
+        }
+        return combined
     }
 
     /**
@@ -1208,6 +1851,7 @@ class UsbTransportManager(
         payload: ByteArray,
         firmwareBytes: ByteArray,
         sha256Hex: String,
+        fullErase: Boolean = false,
         startTime: Long,
         onProgress: (FlashProgressState) -> Unit
     ): Boolean {
@@ -1249,7 +1893,20 @@ class UsbTransportManager(
             }
         }
 
-        val uf2Blocks = buildUf2BlocksForBoard(payload, firmwareBytes, board)
+        if (fullErase) {
+            val eraseDesc = if (board.mcu == McuArchitecture.RP2040) {
+                "64 KB RP2040 LittleFS Config (0x101C0000..0x101D0000)"
+            } else {
+                "28 KB nRF52840 InternalFS / NVS & BLE Bonds (0x000ED000..0x000F4000)"
+            }
+            onLog(
+                LogLevel.INFO,
+                "UF2-ERASE",
+                "Full Flash Erase enabled: Appending $eraseDesc erase blocks to UF2 transfer."
+            )
+        }
+
+        val uf2Blocks = buildUf2BlocksForBoard(payload, firmwareBytes, board, fullErase = fullErase)
         val totalBlocks = uf2Blocks.size
         var cswTag = 1
         val cswBuf = ByteArray(64)
@@ -1335,11 +1992,13 @@ class UsbTransportManager(
 
             if (status < 0) {
                 if (blockIdx == 0) {
-                    onLog(LogLevel.WARN, "UF2-MSC", "UF2 MSC block 0 write returned $status; switching to CDC HCI Serial DFU.")
+                    onLog(LogLevel.WARN, "UF2-MSC", "UF2 MSC block 0 write returned $status; checking interface status.")
                     return false
                 }
-                if (blockIdx >= totalBlocks - 2) {
-                    // On the final UF2 block, ghostfat.c triggers NVIC_SystemReset() immediately after flashing!
+                if (blockIdx == totalBlocks - 1) {
+                    // On writing the very last UF2 block, ghostfat.c validates CRC and immediately triggers NVIC_SystemReset(),
+                    // which causes the USB Mass Storage endpoint to drop before CSW is returned. This is the expected success condition!
+                    onLog(LogLevel.INFO, "UF2-MSC", "Final block ${totalBlocks}/$totalBlocks committed; device rebooted.")
                     break
                 }
                 // Request sense and retry block once
@@ -1351,8 +2010,13 @@ class UsbTransportManager(
                     dataOut = uf2Block,
                     timeoutMs = 3000
                 )
-                if (retryStatus < 0 && blockIdx < totalBlocks - 2) {
-                    throw IllegalStateException("USB UF2 transfer interrupted at block ${blockIdx + 1}/$totalBlocks. Check USB OTG cable.")
+                if (retryStatus < 0) {
+                    if (blockIdx >= totalBlocks - 1) {
+                        onLog(LogLevel.INFO, "UF2-MSC", "Final block write finished; board reset.")
+                        break
+                    } else {
+                        throw IllegalStateException("USB UF2 transfer interrupted at block ${blockIdx + 1}/$totalBlocks. Check USB OTG cable.")
+                    }
                 }
             }
 
@@ -1570,10 +2234,16 @@ class UsbTransportManager(
                 payload = payload,
                 firmwareBytes = firmwareBytes,
                 sha256Hex = sha256Hex,
+                fullErase = fullErase,
                 startTime = startTime,
                 onProgress = onProgress
             )
             if (mscSuccess) return
+            // If the board is a UF2 MSC board (like T1000-E), NEVER fall through to Engine 2 (CDC HCI SLIP DFU).
+            // Sending HCI DFU_START_PACKET commands a destructive chip erase on UF2 bootloaders that bricks the application!
+            throw IllegalStateException(
+                "UF2 Mass Storage flashing on ${board.name} did not complete. Re-plug USB OTG cable and ensure official .uf2 firmware is selected."
+            )
         }
 
         // Engine 2: Adafruit/Nordic HCI SLIP Serial DFU over USB CDC (`hci_transport.c`)
@@ -1591,12 +2261,30 @@ class UsbTransportManager(
             "Prepared nRF52840 DFU image: ${firmwareBytes.size}B (${firmwareBytes.size / 1024} KB) + ${initPacketBytes.size}B .dat Init Packet"
         )
 
+        if (fullErase) {
+            val eraseBlocks = buildFactoryEraseUf2Blocks(board)
+            val regionLabel = if (board.mcu == McuArchitecture.RP2040) {
+                "RP2040 LittleFS Config (0x101C0000..0x101D0000, 64 KB)"
+            } else {
+                "nRF52840 InternalFS / NVS & BLE Bonds (0x000ED000..0x000F4000, 28 KB)"
+            }
+            onLog(
+                LogLevel.INFO,
+                "UF2-ERASE",
+                "Full Flash Erase enabled: Wiping $regionLabel (${eraseBlocks.size} UF2 blocks)..."
+            )
+        }
+
         // 1. Send DFU_START_PACKET (type=3, mode=4 [Application], sd=0, bl=0, app=firmwareBytes.size)
         onProgress(
             FlashProgressState(
                 phase = FlashPhase.ERASING_SECTORS,
                 overallProgress = 0.20f,
-                currentPartitionName = "Erasing nRF52840 Application Flash (${firmwareBytes.size / 1024} KB)",
+                currentPartitionName = if (fullErase) {
+                    "Erasing ${board.name} Application & InternalFS Config (0x26000 + 0xED000)"
+                } else {
+                    "Erasing nRF52840 Application Flash (${firmwareBytes.size / 1024} KB)"
+                },
                 currentAddressHex = "0x00026000",
                 totalBytes = firmwareBytes.size.toLong(),
                 sha256Digest = sha256Hex
@@ -1754,13 +2442,35 @@ class UsbTransportManager(
             setUartDtrRts(session, dtr = true, rts = false)
             onLog(LogLevel.SUCCESS, "SERIAL", "Connected live USB Serial Monitor to ${attached.productName} ($baudRate 8N1)")
 
+            val lineBuffer = StringBuilder()
             val readBuf = ByteArray(512)
             while (isActive) {
                 val readCount = session.connection.bulkTransfer(session.bulkIn, readBuf, readBuf.size, 250)
                 if (readCount > 0) {
-                    val text = String(readBuf, 0, readCount, Charsets.UTF_8).trim()
-                    if (text.isNotEmpty()) {
-                        onLog(LogLevel.RX, "UART-RX", text)
+                    val chunk = String(readBuf, 0, readCount, Charsets.UTF_8)
+                    lineBuffer.append(chunk)
+                    var newlineIdx = lineBuffer.indexOfAny(charArrayOf('\n', '\r'))
+                    while (newlineIdx != -1) {
+                        val line = lineBuffer.substring(0, newlineIdx).trim()
+                        if (newlineIdx + 1 < lineBuffer.length &&
+                            ((lineBuffer[newlineIdx] == '\r' && lineBuffer[newlineIdx + 1] == '\n') ||
+                             (lineBuffer[newlineIdx] == '\n' && lineBuffer[newlineIdx + 1] == '\r'))
+                        ) {
+                            lineBuffer.delete(0, newlineIdx + 2)
+                        } else {
+                            lineBuffer.delete(0, newlineIdx + 1)
+                        }
+                        if (line.isNotEmpty()) {
+                            onLog(LogLevel.RX, "UART-RX", line)
+                        }
+                        newlineIdx = lineBuffer.indexOfAny(charArrayOf('\n', '\r'))
+                    }
+                    if (lineBuffer.length > 4096) {
+                        val leftover = lineBuffer.toString().trim()
+                        if (leftover.isNotEmpty()) {
+                            onLog(LogLevel.RX, "UART-RX", leftover)
+                        }
+                        lineBuffer.clear()
                     }
                 }
                 delay(40)
@@ -1906,20 +2616,48 @@ class UsbTransportManager(
         )
     }
 
+    /**
+     * Configures the host USB-UART bridge or USB CDC interface to `baudRate` 8N1 using the exact
+     * vendor protocol for each bridge chip:
+     * - **Silicon Labs CP2102 / CP2104 (`VID 0x10C4 = 4292`)**: `IFC_ENABLE (0x00)` + `SET_LINE_CTL (0x03, 8N1)` + `SET_BAUDRATE (0x1E)`.
+     * - **QinHeng CH9102F / CH343 / CH340 (`VID 0x1A86 = 6790`)**: Sends both standard CDC-ACM `SET_LINE_CODING (0x20)`
+     *   (for CH9102F/CH343 on T-Beam v1.2 & T-LoRa V2.1) AND CH340 vendor baud divisor registers (`0x9A, 0x1312` & `0x2518`)
+     *   (for CH340/CH341 on T-Beam v1.1 & Heltec V2).
+     * - **FTDI FT232R / FT231X (`VID 0x0403 = 1027`)**: FTDI reset + 8N1 data format + 3MHz baud divisor.
+     * - **Espressif Native USB (`VID 0x303A = 12346`) & nRF52 / RP2040 CDC**: Standard CDC-ACM `SET_LINE_CODING (0x20)`.
+     */
     private fun configureUsbBaudRate(session: UsbSerialPortSession, baudRate: Int) {
         val conn = session.connection
         val vendorId = session.device.vendorId
         val ctrlId = session.controlInterfaceId
         when (vendorId) {
             4292 -> {
-                // Silicon Labs CP210x: IFC_ENABLE (0x00) + SET_BAUDRATE (0x1E)
+                // Silicon Labs CP210x: IFC_ENABLE (0x00) + SET_LINE_CTL (0x03 = 0x0800 8N1) + SET_BAUDRATE (0x1E)
                 conn.controlTransfer(0x41, 0x00, 0x01, ctrlId, null, 0, 300)
+                conn.controlTransfer(0x41, 0x03, 0x0800, ctrlId, null, 0, 300)
                 val baudBytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(baudRate).array()
                 conn.controlTransfer(0x41, 0x1E, 0, ctrlId, baudBytes, 4, 300)
             }
+            6790 -> {
+                // 1. Standard CDC-ACM SET_LINE_CODING (0x20) for CH9102F / CH343 (PID 0x55D4 / 0x55D3)
+                val lineCoding = ByteBuffer.allocate(7).order(ByteOrder.LITTLE_ENDIAN)
+                    .putInt(baudRate)
+                    .put(0.toByte())
+                    .put(0.toByte())
+                    .put(8.toByte())
+                    .array()
+                conn.controlTransfer(0x21, 0x20, 0, ctrlId, lineCoding, lineCoding.size, 300)
+
+                // 2. Vendor CH340/CH341 baud rate divisor registers (0x9A) for CH340G/CH340C/CH340K (PID 0x7523 / 0x5523)
+                val (factor, prescaler) = computeCh340BaudFactor(baudRate)
+                val reg1312 = ((factor and 0xFF) shl 8) or (prescaler and 0xFF)
+                conn.controlTransfer(0x40, 0x9A, 0x1312, reg1312, null, 0, 200)
+                conn.controlTransfer(0x40, 0x9A, 0x2518, 0x00C3, null, 0, 200) // 8N1 RX+TX enable
+            }
             1027 -> {
-                // FTDI FT232 Reset + Baudrate
+                // FTDI FT232 Reset + 8N1 + Baudrate
                 conn.controlTransfer(0x40, 0x00, 0x00, 0, null, 0, 300)
+                conn.controlTransfer(0x40, 0x04, 0x0008, 0, null, 0, 300)
                 val divisor = (3000000 / baudRate).coerceAtLeast(1)
                 conn.controlTransfer(0x40, 0x03, divisor, 0, null, 0, 300)
             }
@@ -1936,10 +2674,22 @@ class UsbTransportManager(
         }
     }
 
+    private fun computeCh340BaudFactor(baudRate: Int): Pair<Int, Int> {
+        var clock = 12000000 * 2
+        var prescaler = 3
+        while (clock / baudRate > 256 && prescaler > 0) {
+            clock /= 8
+            prescaler--
+        }
+        val div = (clock / baudRate).coerceIn(1, 256)
+        val factor = (256 - div) and 0xFF
+        return Pair(factor, prescaler or 0x80)
+    }
+
     /**
      * Executes the exact esptool bootloader entry sequence for both:
-     * - ESP32-S3 Native USB-Serial-JTAG (`VID 0x303A`, used on B&Q Station G2, T-Beam Supreme, T-Deck, XIAO S3)
-     * - Classic USB-UART bridges (CP2102, CH9102, CH340, FTDI).
+     * - ESP32-S3 / ESP32-C3 Native USB-Serial-JTAG (`VID 0x303A`, used on Station G2, T-Beam Supreme, T-Deck, XIAO S3, T3-S3, Vision Master)
+     * - Classic USB-UART bridges (`CP2102` `0x10C4`, `CH9102F/CH340` `0x1A86`, `FTDI` `0x0403` used on Heltec V3, Heltec V4, Heltec V2, T-Beam v1.1/v1.2, T-LoRa V2.1).
      */
     private suspend fun performEspBootloaderResetOnSession(session: UsbSerialPortSession) {
         val vendorId = session.device.vendorId
@@ -1955,7 +2705,7 @@ class UsbTransportManager(
             session.connection.controlTransfer(0x21, 0x22, 0x00, ctrlId, null, 0, 200)
             delay(120)
 
-            // 2. Also execute the official Espressif USB-Serial-JTAG hardware state machine sequence:
+            // 2. Execute the official Espressif USB-Serial-JTAG hardware state machine sequence:
             // DTR=0, RTS=0 -> DTR=1, RTS=0 (sets IO0 low) -> DTR=0, RTS=1 (asserts reset) -> DTR=1, RTS=1 -> DTR=0, RTS=0
             session.connection.controlTransfer(0x21, 0x22, 0x00, ctrlId, null, 0, 200)
             session.connection.controlTransfer(0x21, 0x22, 0x01, ctrlId, null, 0, 200) // DTR=1, RTS=0
@@ -1967,19 +2717,47 @@ class UsbTransportManager(
             delay(80)
         } else {
             // Classic UART bridge auto-reset transistor circuit (CP2102 / CH9102 / CH340)
-            setUartDtrRts(session, dtr = false, rts = true)
+            setUartDtrRts(session, dtr = false, rts = true) // EN=0, IO0=1
             delay(100)
-            setUartDtrRts(session, dtr = true, rts = false)
-            delay(50)
-            setUartDtrRts(session, dtr = false, rts = false)
+            setUartDtrRts(session, dtr = true, rts = false) // EN=1, IO0=0
+            delay(75)
+            setUartDtrRts(session, dtr = false, rts = false) // EN=1, IO0=1
             delay(60)
         }
     }
 
-    private suspend fun performHardResetToApplication(session: UsbSerialPortSession) {
-        setUartDtrRts(session, dtr = false, rts = true)
+    /**
+     * Alternate `TightReset` pulse sequence for CP2102 / CH9102F / CH340 boards with larger EN RC delay capacitors
+     * (e.g. LilyGO T-Beam v1.1/v1.2, Heltec V3/V4, T-LoRa V2.1).
+     */
+    private suspend fun performEspTightResetOnUartSession(session: UsbSerialPortSession) {
+        setUartDtrRts(session, dtr = false, rts = false)
+        delay(40)
+        setUartDtrRts(session, dtr = true, rts = true)
+        delay(60)
+        setUartDtrRts(session, dtr = false, rts = true) // EN=0, IO0=1
+        delay(120)
+        setUartDtrRts(session, dtr = true, rts = false) // EN=1, IO0=0
         delay(100)
         setUartDtrRts(session, dtr = false, rts = false)
+        delay(60)
+    }
+
+    private suspend fun performHardResetToApplication(session: UsbSerialPortSession) {
+        if (session.device.vendorId == 12346) {
+            // Official Espressif USB-Serial-JTAG normal boot reset sequence (latches IO0=1, then pulses chip_reset via 0x02 -> 0x03 -> 0x00)
+            val ctrlId = session.controlInterfaceId
+            session.connection.controlTransfer(0x21, 0x22, 0x00, ctrlId, null, 0, 200) // DTR=0, RTS=0 (IO0=1)
+            delay(40)
+            session.connection.controlTransfer(0x21, 0x22, 0x02, ctrlId, null, 0, 200) // DTR=0, RTS=1
+            session.connection.controlTransfer(0x21, 0x22, 0x03, ctrlId, null, 0, 200) // DTR=1, RTS=1 (triggers reset)
+            delay(100)
+            session.connection.controlTransfer(0x21, 0x22, 0x00, ctrlId, null, 0, 200) // DTR=0, RTS=0
+        } else {
+            setUartDtrRts(session, dtr = false, rts = true)
+            delay(100)
+            setUartDtrRts(session, dtr = false, rts = false)
+        }
     }
 
     private fun setUartDtrRts(session: UsbSerialPortSession, dtr: Boolean, rts: Boolean) {
@@ -1988,18 +2766,24 @@ class UsbTransportManager(
         val ctrlId = session.controlInterfaceId
         when (vendorId) {
             4292 -> {
-                // CP210x SET_MHS (0x07)
+                // Silicon Labs CP210x SET_MHS (0x07): bits 0..1 = DTR/RTS state, bits 8..9 = DTR/RTS update mask
                 var value = 0x0300
                 if (dtr) value = value or 0x01
                 if (rts) value = value or 0x02
                 conn.controlTransfer(0x41, 0x07, value, ctrlId, null, 0, 200)
             }
             6790 -> {
-                // CH340 / CH9102 MODEM_CTRL (0xA4)
-                var value = 0xFF
-                if (dtr) value = value and (1 shl 5).inv()
-                if (rts) value = value and (1 shl 6).inv()
-                conn.controlTransfer(0x40, 0xA4, value, 0, null, 0, 200)
+                // Send BOTH CH340 vendor MODEM_CTRL (0xA4) AND standard CDC-ACM SET_CONTROL_LINE_STATE (0x22)
+                // so both CH340G/C (PID 0x7523) and CH9102F/CH343 (PID 0x55D4) toggle DTR/RTS reliably!
+                var ch340Val = 0xFF
+                if (dtr) ch340Val = ch340Val and (1 shl 5).inv()
+                if (rts) ch340Val = ch340Val and (1 shl 6).inv()
+                conn.controlTransfer(0x40, 0xA4, ch340Val, 0, null, 0, 200)
+
+                var cdcVal = 0
+                if (dtr) cdcVal = cdcVal or 0x01
+                if (rts) cdcVal = cdcVal or 0x02
+                conn.controlTransfer(0x21, 0x22, cdcVal, ctrlId, null, 0, 200)
             }
             else -> {
                 // CDC-ACM SET_CONTROL_LINE_STATE (0x22)

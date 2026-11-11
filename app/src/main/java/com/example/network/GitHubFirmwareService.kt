@@ -809,6 +809,7 @@ class GitHubFirmwareRepository {
         useMeshtasticMui: Boolean = true,
         tDeckMeshCoreFlavor: TDeckMeshCoreFlavor = TDeckMeshCoreFlavor.RIPPLE,
         preferBleOtaPackage: Boolean = false,
+        bundleWebUiPartition: Boolean = false,
         onProgress: (Float, String) -> Unit
     ): PreparedFirmwareImage = withContext(Dispatchers.IO) {
         val isTDeckMeshCore = board.id == "lilygo_tdeck" && release.ecosystem == FirmwareEcosystem.MESHCORE
@@ -939,6 +940,8 @@ class GitHubFirmwareRepository {
                         meshCoreRole = meshCoreRole,
                         preferFactoryImage = effectiveFullErase,
                         useMeshtasticMui = useMeshtasticMui,
+                        bundleWebUi = bundleWebUiPartition,
+                        preferBleOtaPackage = preferBleOtaPackage,
                         onProgress = onProgress
                     )
                     if (fastExtracted != null) {
@@ -963,6 +966,8 @@ class GitHubFirmwareRepository {
                                     meshCoreRole = meshCoreRole,
                                     preferFactoryImage = effectiveFullErase,
                                     useMeshtasticMui = useMeshtasticMui,
+                                    bundleWebUi = bundleWebUiPartition,
+                                    preferBleOtaPackage = preferBleOtaPackage,
                                     onProgress = onProgress
                                 )
                                 if (extracted != null) {
@@ -1553,6 +1558,17 @@ class GitHubFirmwareRepository {
                 !lowerFileName.contains("inkhud")
             "lilygo_tlora_t3s3" -> !lowerFileName.contains("epaper") &&
                 !lowerFileName.contains("inkhud")
+            "heltec_v2" -> !lowerFileName.contains("heltec_v3") &&
+                !lowerFileName.contains("heltec-v3") &&
+                !lowerFileName.contains("heltec_v4") &&
+                !lowerFileName.contains("heltec-v4") &&
+                !lowerFileName.contains("wsl")
+            "lilygo_tlora_v2_1" -> !lowerFileName.contains("t3s3") &&
+                !lowerFileName.contains("v2-1-1_8") &&
+                !lowerFileName.contains("v1")
+            "heltec_vision_master_e290" -> !lowerFileName.contains("e213") &&
+                !lowerFileName.contains("t190") &&
+                !lowerFileName.contains("inkhud")
             "elecrow_thinknode_m1" -> !lowerFileName.contains("inkhud") &&
                 !lowerFileName.contains("thinknode_m2") &&
                 !lowerFileName.contains("thinknode_m3") &&
@@ -1593,6 +1609,9 @@ class GitHubFirmwareRepository {
             "heltec_wireless_paper" -> tokens.addAll(listOf("heltec_wireless_paper", "heltec-wireless-paper"))
             "heltec_wireless_tracker" -> tokens.addAll(listOf("heltec_wireless_tracker", "heltec-wireless-tracker"))
             "lilygo_tlora_t3s3" -> tokens.addAll(listOf("lilygo_t3s3_sx1262", "lilygo_t3s3", "tlora-t3s3-v1", "tlora-t3s3"))
+            "heltec_v2" -> tokens.addAll(listOf("heltec-v2_1", "heltec-v2.1", "heltec_v2"))
+            "lilygo_tlora_v2_1" -> tokens.addAll(listOf("tlora-v2-1-1_6", "tlora-v2-1-1.6", "tlora_v2_1_1p6", "tlora_v2_1"))
+            "heltec_vision_master_e290" -> tokens.addAll(listOf("heltec-vision-master-e290", "heltec_vision_master_e290", "vision_master_e290"))
             "elecrow_thinknode_m1" -> tokens.addAll(listOf("thinknode_m1", "thinknode-m1"))
             "rpi_pico_waveshare" -> tokens.addAll(
                 listOf("firmware-pico-", "firmware-picow-", "picow_", "rpi-pico", "waveshare_rp2040_lora")
@@ -1732,6 +1751,8 @@ class GitHubFirmwareRepository {
         meshCoreRole: MeshCoreRole,
         preferFactoryImage: Boolean,
         useMeshtasticMui: Boolean = true,
+        bundleWebUi: Boolean = false,
+        preferBleOtaPackage: Boolean = false,
         onProgress: (Float, String) -> Unit
     ): PreparedFirmwareImage? {
         val zipIndex = fetchOrGetRemoteZipIndex(zipUrl, onProgress) ?: return null
@@ -1740,8 +1761,10 @@ class GitHubFirmwareRepository {
         val resolvedCdnUrl = zipIndex.resolvedCdnUrl
 
         // If the remote ZIP is already a single-board Nordic/Adafruit DFU package (contains .dat + .bin),
-        // download the entire DFU .zip so BleTransportManager / UsbTransportManager gets both the official .dat and .bin!
+        // only download the entire DFU .zip when preferBleOtaPackage is true (for BLE OTA flashing).
+        // For USB OTG flashing, prefer extracting the .uf2 file!
         val isSingleBoardDfuZip = board.mcu == McuArchitecture.NRF52840 &&
+            preferBleOtaPackage &&
             entries.size <= 6 &&
             entries.any { it.fileName.endsWith(".dat", ignoreCase = true) } &&
             entries.any { it.fileName.endsWith(".bin", ignoreCase = true) }
@@ -1766,7 +1789,7 @@ class GitHubFirmwareRepository {
         val allBoardEntries = entries.filter { e ->
             val lower = e.fileName.lowercase(Locale.US)
             val validExt = lower.endsWith(desiredExt) ||
-                (board.mcu == McuArchitecture.NRF52840 && (lower.endsWith("-ota.zip") || lower.endsWith(".zip") || lower.endsWith(".bin")))
+                (board.mcu == McuArchitecture.NRF52840 && preferBleOtaPackage && (lower.endsWith("-ota.zip") || lower.endsWith(".zip") || lower.endsWith(".bin")))
             validExt &&
                 !lower.contains("littlefs") &&
                 !lower.contains("bleota") &&
@@ -1787,9 +1810,10 @@ class GitHubFirmwareRepository {
             allBoardEntries
         }
 
-        // On nRF52840 (SenseCAP T1000-E, RAK4631, LilyGO T-Echo), prefer the official -ota.zip DFU package
-        // (which contains both the official .dat Init Packet and raw .bin) when present inside the release archive!
-        val nrfOtaZipEntry = if (board.mcu == McuArchitecture.NRF52840) {
+        // On nRF52840 (SenseCAP T1000-E, RAK4631, LilyGO T-Echo):
+        // Only select the official -ota.zip DFU package when preferBleOtaPackage is true!
+        // When flashing over USB OTG (preferBleOtaPackage == false), ALWAYS select the official .uf2 file!
+        val nrfOtaZipEntry = if (board.mcu == McuArchitecture.NRF52840 && preferBleOtaPackage) {
             matchingEntries.firstOrNull {
                 val lower = it.fileName.lowercase(Locale.US)
                 lower.endsWith("-ota.zip") || lower.endsWith("_ota.zip") || lower.endsWith(".zip")
@@ -1878,12 +1902,74 @@ class GitHubFirmwareRepository {
             return null
         }
 
-        return inspectAndWrapBinary(
+        val baseWrapped = inspectAndWrapBinary(
             bytes = uncompressedBytes,
             fileName = chosenEntry.fileName,
             board = board,
             isRealBinary = true
         )
+
+        val isEsp = board.mcu == McuArchitecture.ESP32 ||
+            board.mcu == McuArchitecture.ESP32_S3 ||
+            board.mcu == McuArchitecture.ESP32_C3
+
+        val littleFsEntry = if (bundleWebUi && isEsp) {
+            entries.firstOrNull { e ->
+                val lower = e.fileName.lowercase(Locale.US)
+                lower.endsWith(".bin") && lower.contains("littlefs") && matchesBoardStrictly(board, lower)
+            }
+        } else null
+
+        if (littleFsEntry != null) {
+            try {
+                val fsEnd = (littleFsEntry.localHeaderOffset + 30 + 256 + littleFsEntry.compressedSize).coerceAtMost(totalZipSize - 1)
+                val fsReq = Request.Builder()
+                    .url(resolvedCdnUrl)
+                    .header("Range", "bytes=${littleFsEntry.localHeaderOffset}-$fsEnd")
+                    .build()
+                val fsSlice = okHttpClient.newCall(fsReq).execute().use { resp ->
+                    if (resp.code != 206) null else resp.body?.bytes()
+                }
+                if (fsSlice != null && fsSlice.size >= 30 && readLe32(fsSlice, 0) == 0x04034B50) {
+                    val nLen = readLe16(fsSlice, 26)
+                    val xLen = readLe16(fsSlice, 28)
+                    val dStart = 30 + nLen + xLen
+                    if (dStart + littleFsEntry.compressedSize <= fsSlice.size) {
+                        val fsBytes: ByteArray? = when (littleFsEntry.compressionMethod) {
+                            0 -> fsSlice.copyOfRange(dStart, dStart + littleFsEntry.compressedSize)
+                            8 -> {
+                                val bais = ByteArrayInputStream(fsSlice, dStart, littleFsEntry.compressedSize)
+                                val inflater = Inflater(true)
+                                try {
+                                    val iis = InflaterInputStream(bais, inflater, 16384)
+                                    val out = ByteArrayOutputStream(littleFsEntry.uncompressedSize.coerceAtLeast(65536))
+                                    val buf = ByteArray(16384)
+                                    var n: Int
+                                    while (iis.read(buf).also { n = it } != -1) {
+                                        out.write(buf, 0, n)
+                                    }
+                                    out.toByteArray()
+                                } finally {
+                                    inflater.end()
+                                }
+                            }
+                            else -> null
+                        }
+                        if (fsBytes != null) {
+                            val offset = if (board.flashSizeMb <= 4) 0x290000 else 0x300000
+                            return baseWrapped.copy(
+                                littleFsBytes = fsBytes,
+                                littleFsOffset = offset,
+                                littleFsFileName = littleFsEntry.fileName
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        return baseWrapped
     }
 
     /**
@@ -1896,6 +1982,8 @@ class GitHubFirmwareRepository {
         meshCoreRole: MeshCoreRole,
         preferFactoryImage: Boolean,
         useMeshtasticMui: Boolean = true,
+        bundleWebUi: Boolean = false,
+        preferBleOtaPackage: Boolean = false,
         onProgress: (Float, String) -> Unit
     ): PreparedFirmwareImage? {
         val desiredExt = if (board.mcu == McuArchitecture.NRF52840 || board.mcu == McuArchitecture.RP2040) ".uf2" else ".bin"
@@ -1904,6 +1992,7 @@ class GitHubFirmwareRepository {
         val nonTargetCandidates = mutableListOf<Pair<String, ByteArray>>()
         var datEntry: Pair<String, ByteArray>? = null
         var binEntry: Pair<String, ByteArray>? = null
+        var littleFsPair: Pair<String, ByteArray>? = null
         var totalEntriesSeen = 0
 
         val zis = ZipInputStream(inputStream)
@@ -1917,9 +2006,11 @@ class GitHubFirmwareRepository {
 
                     if (lower.endsWith(".dat") && datEntry == null) {
                         datEntry = Pair(entryName, readCurrentZipEntryBytes(zis))
+                    } else if (lower.endsWith(".bin") && lower.contains("littlefs") && matchesBoardStrictly(board, lower) && littleFsPair == null) {
+                        littleFsPair = Pair(entryName, readCurrentZipEntryBytes(zis))
                     } else if (
                         (lower.endsWith(desiredExt) ||
-                            (board.mcu == McuArchitecture.NRF52840 && (lower.endsWith("-ota.zip") || lower.endsWith(".bin")))) &&
+                            (board.mcu == McuArchitecture.NRF52840 && preferBleOtaPackage && (lower.endsWith("-ota.zip") || lower.endsWith(".bin")))) &&
                         !lower.contains("littlefs") &&
                         !lower.contains("bleota") &&
                         !lower.startsWith("mt-")
@@ -1939,7 +2030,7 @@ class GitHubFirmwareRepository {
                         if (matchesBoard && matchesTDeckUiMode) {
                             onProgress(0.70f, "Extracting board image from archive: $entryName")
                             matchedEntries.add(Pair(entryName, bytes))
-                            if (board.mcu == McuArchitecture.NRF52840 && lower.endsWith("-ota.zip")) break
+                            if (board.mcu == McuArchitecture.NRF52840 && preferBleOtaPackage && lower.endsWith("-ota.zip")) break
                             if (preferFactoryImage && isFactoryBinaryName(lower)) break
                             if (!preferFactoryImage && isExplicitUpdateBinaryName(lower)) break
                         } else if (totalEntriesSeen <= 6 && nonTargetCandidates.isEmpty()) {
@@ -1959,8 +2050,8 @@ class GitHubFirmwareRepository {
             }
         }
 
-        // If this was a single-board Nordic/Adafruit DFU .zip with both .dat and .bin, repackage them into a clean DFU .zip
-        if (board.mcu == McuArchitecture.NRF52840 && datEntry != null && binEntry != null && totalEntriesSeen <= 6) {
+        // If this was a single-board Nordic/Adafruit DFU .zip with both .dat and .bin, only repackage when preferBleOtaPackage is true
+        if (board.mcu == McuArchitecture.NRF52840 && preferBleOtaPackage && datEntry != null && binEntry != null && totalEntriesSeen <= 6) {
             val bos = ByteArrayOutputStream()
             java.util.zip.ZipOutputStream(bos).use { zos ->
                 zos.putNextEntry(java.util.zip.ZipEntry(datEntry!!.first))
@@ -1978,7 +2069,7 @@ class GitHubFirmwareRepository {
             )
         }
 
-        val nrfOtaMatch = if (board.mcu == McuArchitecture.NRF52840) {
+        val nrfOtaMatch = if (board.mcu == McuArchitecture.NRF52840 && preferBleOtaPackage) {
             matchedEntries.firstOrNull { it.first.lowercase(Locale.US).endsWith("-ota.zip") }
         } else {
             null
@@ -2008,13 +2099,23 @@ class GitHubFirmwareRepository {
             null
         }
 
-        return chosenPair?.let { (name, bytes) ->
+        val baseWrapped = chosenPair?.let { (name, bytes) ->
             inspectAndWrapBinary(
                 bytes = bytes,
                 fileName = name,
                 board = board,
                 isRealBinary = true
             )
+        }
+        return if (baseWrapped != null && littleFsPair != null && bundleWebUi) {
+            val offset = if (board.flashSizeMb <= 4) 0x290000 else 0x300000
+            baseWrapped.copy(
+                littleFsBytes = littleFsPair.second,
+                littleFsOffset = offset,
+                littleFsFileName = littleFsPair.first
+            )
+        } else {
+            baseWrapped
         }
     }
 

@@ -24,7 +24,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class ExampleRobolectricTest {
 
     @Test
@@ -739,6 +739,178 @@ class ExampleRobolectricTest {
             assertTrue(nrfCompletedPhases.contains(com.example.model.FlashPhase.COMPLETED))
         }
     }
-}
 
+    @Test
+    fun `verify seeed t1000e selects uf2 on usb and ota zip on ble`() {
+        val repo = GitHubFirmwareRepository()
+        val t1000e = BoardCatalog.allBoards.first { it.id == "seeed_t1000e" }
+
+        // Create an in-memory Meshtastic nRF52 release ZIP containing both .uf2 and -ota.zip
+        val zipBytes = ByteArrayOutputStream().use { baos ->
+            ZipOutputStream(baos).use { zos ->
+                // 1. Official UF2 file
+                zos.putNextEntry(ZipEntry("firmware-tracker-t1000-e-2.5.8.uf2"))
+                val uf2Data = ByteArray(1024)
+                // Set UF2 magicStart0 and magicStart1
+                uf2Data[0] = 0x55.toByte() // 0x0A324655
+                uf2Data[1] = 0x46.toByte()
+                uf2Data[2] = 0x32.toByte()
+                uf2Data[3] = 0x0A.toByte()
+                uf2Data[4] = 0x57.toByte() // 0x9E5D5157
+                uf2Data[5] = 0x51.toByte()
+                uf2Data[6] = 0x5D.toByte()
+                uf2Data[7] = 0x9E.toByte()
+                zos.write(uf2Data)
+                zos.closeEntry()
+
+                // 2. Official Nordic BLE OTA ZIP package
+                zos.putNextEntry(ZipEntry("firmware-tracker-t1000-e-2.5.8-ota.zip"))
+                val otaZipBytes = ByteArray(256) { 0x50.toByte() }
+                zos.write(otaZipBytes)
+                zos.closeEntry()
+            }
+            baos.toByteArray()
+        }
+
+        // Test USB OTG extraction (preferBleOtaPackage = false) -> MUST select .uf2
+        val usbExtracted = repo.extractBoardBinaryFromZipStream(
+            inputStream = ByteArrayInputStream(zipBytes),
+            board = t1000e,
+            ecosystem = FirmwareEcosystem.MESHTASTIC,
+            meshCoreRole = MeshCoreRole.COMPANION_BLE,
+            preferFactoryImage = false,
+            preferBleOtaPackage = false,
+            onProgress = { _, _ -> }
+        )
+        assertNotNull(usbExtracted)
+        assertEquals("firmware-tracker-t1000-e-2.5.8.uf2", usbExtracted!!.fileName)
+        assertTrue(usbExtracted.fileName.endsWith(".uf2"))
+
+        // Test BLE OTA extraction (preferBleOtaPackage = true) -> MUST select -ota.zip
+        val bleExtracted = repo.extractBoardBinaryFromZipStream(
+            inputStream = ByteArrayInputStream(zipBytes),
+            board = t1000e,
+            ecosystem = FirmwareEcosystem.MESHTASTIC,
+            meshCoreRole = MeshCoreRole.COMPANION_BLE,
+            preferFactoryImage = false,
+            preferBleOtaPackage = true,
+            onProgress = { _, _ -> }
+        )
+        assertNotNull(bleExtracted)
+        assertEquals("firmware-tracker-t1000-e-2.5.8-ota.zip", bleExtracted!!.fileName)
+        assertTrue(bleExtracted.fileName.endsWith("-ota.zip"))
+    }
+
+    @Test
+    fun `verify ESP32 S3 C3 and nRF52840 hardware flash erase regions and UF2 factory wipe`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val logs = mutableListOf<String>()
+        val usb = com.example.hardware.UsbTransportManager(
+            context = app,
+            onLog = { _, tag, msg -> logs.add("[$tag] $msg") },
+            onDevicesChanged = {}
+        )
+
+        // 1. Verify all ESP32 / ESP32-S3 / ESP32-C3 board variants are in BoardCatalog with accurate MCU and flash sizes
+        val tBeamV12 = BoardCatalog.allBoards.first { it.id == "lilygo_tbeam_v1_2" }
+        val heltecV2 = BoardCatalog.allBoards.first { it.id == "heltec_v2" }
+        val tLoraV21 = BoardCatalog.allBoards.first { it.id == "lilygo_tlora_v2_1" }
+        val tLoraT3S3 = BoardCatalog.allBoards.first { it.id == "lilygo_tlora_t3s3" }
+        val heltecV3 = BoardCatalog.allBoards.first { it.id == "heltec_v3" }
+        val visionE290 = BoardCatalog.allBoards.first { it.id == "heltec_vision_master_e290" }
+        val heltecV4 = BoardCatalog.allBoards.first { it.id == "heltec_v4" }
+        val stationG2 = BoardCatalog.allBoards.first { it.id == "station_g2" }
+        val tDeck = BoardCatalog.allBoards.first { it.id == "lilygo_tdeck" }
+
+        assertEquals(McuArchitecture.ESP32, tBeamV12.mcu)
+        assertEquals(4, tBeamV12.flashSizeMb)
+        assertEquals(McuArchitecture.ESP32, heltecV2.mcu)
+        assertEquals(4, heltecV2.flashSizeMb)
+        assertEquals(McuArchitecture.ESP32, tLoraV21.mcu)
+        assertEquals(4, tLoraV21.flashSizeMb)
+        assertEquals(McuArchitecture.ESP32_S3, tLoraT3S3.mcu)
+        assertEquals(4, tLoraT3S3.flashSizeMb)
+        assertEquals("0x0000", tLoraT3S3.partitions.first().addressHex)
+        assertEquals(McuArchitecture.ESP32_S3, visionE290.mcu)
+        assertEquals(8, visionE290.flashSizeMb)
+
+        // 2. Verify 4MB ESP32 / ESP32-S3 erase regions (wipes 0x290000 SPIFFS/LittleFS and 0x300000 LittleFS, plus NVS 0x9000 when flashing at 0x10000)
+        val regions4MbUpdate = usb.getEspEraseRegionsForBoard(tBeamV12, isStandaloneFullChipErase = false, mainTargetOffset = 0x10000)
+        assertTrue("4MB update with fullErase must wipe NVS at 0x9000", regions4MbUpdate.any { it.first == 0x9000 && it.second == 0x7000 })
+        assertTrue("4MB fullErase must wipe 4MB SPIFFS/LittleFS at 0x290000", regions4MbUpdate.any { it.first == 0x290000 })
+        assertTrue("4MB fullErase must wipe LittleFS at 0x300000", regions4MbUpdate.any { it.first == 0x300000 })
+
+        // 3. Verify 8MB ESP32-S3 erase regions (Heltec V3, T-Beam Supreme, XIAO S3, Vision Master E290)
+        val regions8MbFactory = usb.getEspEraseRegionsForBoard(heltecV3, isStandaloneFullChipErase = false, mainTargetOffset = 0x0000)
+        assertTrue("8MB fullErase must wipe MeshCore/WebUI LittleFS at 0x300000", regions8MbFactory.any { it.first == 0x300000 })
+        assertTrue("8MB fullErase must wipe Meshtastic 2.5+ /prefs LittleFS at 0x670000", regions8MbFactory.any { it.first == 0x670000 })
+
+        // 4. Verify 16MB ESP32-S3 erase regions (Heltec V4, Station G2, T-Deck)
+        val regions16Mb = usb.getEspEraseRegionsForBoard(heltecV4, isStandaloneFullChipErase = false, mainTargetOffset = 0x0000)
+        assertTrue("16MB fullErase must wipe 0x300000", regions16Mb.any { it.first == 0x300000 })
+        assertTrue("16MB fullErase must wipe 0x670000", regions16Mb.any { it.first == 0x670000 })
+        assertTrue("16MB fullErase must wipe 16MB LittleFS /prefs at 0xC90000", regions16Mb.any { it.first == 0xC90000 })
+
+        // 5. Verify nRF52840 UF2 Factory Erase Block generation (112 blocks = 28KB at 0x000ED000..0x000F3F00)
+        val t1000e = BoardCatalog.allBoards.first { it.id == "seeed_t1000e" }
+        val nrfEraseBlocks = usb.buildFactoryEraseUf2Blocks(t1000e)
+        assertEquals("nRF52840 InternalFS is 28KB (112 x 256B UF2 blocks)", 112, nrfEraseBlocks.size)
+        val firstEraseBlock = nrfEraseBlocks.first()
+        val firstTargetAddr = java.nio.ByteBuffer.wrap(firstEraseBlock, 12, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        val firstFamilyId = java.nio.ByteBuffer.wrap(firstEraseBlock, 28, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        assertEquals("First nRF52840 erase block must target 0x000ED000", 0x000ED000, firstTargetAddr)
+        assertEquals("nRF52840 UF2 family ID must be 0xADA52840", 0xADA52840.toInt(), firstFamilyId)
+        // Verify payload bytes [32..287] are all 0xFF (NOR flash erased state)
+        for (i in 32 until 288) {
+            assertEquals(0xFF.toByte(), firstEraseBlock[i])
+        }
+
+        // Verify appending nRF52840 erase blocks to an existing UF2 firmware re-indexes blockNo and numBlocks sequentially
+        val dummyAppBlocks = usb.buildUf2BlocksForBoard(
+            payload = ByteArray(512) { 0x42 },
+            firmwareBytes = ByteArray(512) { 0x42 },
+            board = t1000e,
+            fullErase = false
+        )
+        assertEquals(2, dummyAppBlocks.size)
+        val combinedUf2Blocks = usb.buildUf2BlocksForBoard(
+            payload = ByteArray(512) { 0x42 },
+            firmwareBytes = ByteArray(512) { 0x42 },
+            board = t1000e,
+            fullErase = true
+        )
+        assertEquals("2 app blocks + 112 InternalFS erase blocks = 114 total UF2 blocks", 114, combinedUf2Blocks.size)
+        combinedUf2Blocks.forEachIndexed { idx, block ->
+            val blockNo = java.nio.ByteBuffer.wrap(block, 20, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+            val numBlocks = java.nio.ByteBuffer.wrap(block, 24, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+            assertEquals(idx, blockNo)
+            assertEquals(114, numBlocks)
+        }
+
+        // 6. Verify standalone eraseDeviceFlashOverUsb succeeds on both ESP32-S3 and nRF52840 in bench mode
+        kotlinx.coroutines.runBlocking {
+            var espFinalPhase = com.example.model.FlashPhase.IDLE
+            val espErased = usb.eraseDeviceFlashOverUsb(
+                attached = null,
+                board = heltecV4,
+                baudRate = 921600,
+                loopbackBench = true,
+                onProgress = { espFinalPhase = it.phase }
+            )
+            assertTrue("ESP32-S3 standalone hardware flash erase must succeed", espErased)
+            assertEquals(com.example.model.FlashPhase.COMPLETED, espFinalPhase)
+
+            var nrfFinalPhase = com.example.model.FlashPhase.IDLE
+            val nrfErased = usb.eraseDeviceFlashOverUsb(
+                attached = null,
+                board = t1000e,
+                baudRate = 115200,
+                loopbackBench = true,
+                onProgress = { nrfFinalPhase = it.phase }
+            )
+            assertTrue("nRF52840 standalone UF2 InternalFS flash erase must succeed", nrfErased)
+            assertEquals(com.example.model.FlashPhase.COMPLETED, nrfFinalPhase)
+        }
+    }
+}
 

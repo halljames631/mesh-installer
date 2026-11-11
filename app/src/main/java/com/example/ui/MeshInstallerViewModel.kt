@@ -84,6 +84,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
     private var batchDownloadJob: Job? = null
     private var bleScanJob: Job? = null
+    private var flashJob: Job? = null
 
     private val initialMyDevices = vaultManager.getMyDeviceIds()
     private val initialBoard = BoardCatalog.allBoards.firstOrNull { it.id in initialMyDevices }
@@ -1100,7 +1101,8 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                 ?: repository.curatedFallbackReleases(FirmwareEcosystem.MESHCORE).first()
         }
 
-        viewModelScope.launch {
+        flashJob?.cancel()
+        flashJob = viewModelScope.launch {
             appendLog(
                 LogLevel.INFO,
                 "FLASH-JOB",
@@ -1190,6 +1192,7 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
                     useMeshtasticMui = snapshot.tDeckMeshtasticMui,
                     tDeckMeshCoreFlavor = snapshot.tDeckMeshCoreFlavor,
                     preferBleOtaPackage = snapshot.selectedTransport == ConnectionTransport.BLE_DFU,
+                    bundleWebUiPartition = snapshot.bundleWebUiPartition,
                     onProgress = { p, msg ->
                         appendLog(LogLevel.INFO, "BINARY", msg)
                         _uiState.update { s ->
@@ -1280,8 +1283,65 @@ class MeshInstallerViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun eraseDeviceFlash() {
+        val snapshot = _uiState.value
+        if (snapshot.flashProgress.phase != FlashPhase.IDLE &&
+            snapshot.flashProgress.phase != FlashPhase.COMPLETED &&
+            snapshot.flashProgress.phase != FlashPhase.FAILED
+        ) {
+            return
+        }
+
+        flashJob?.cancel()
+        flashJob = viewModelScope.launch {
+            appendLog(
+                LogLevel.WARN,
+                "ERASE-JOB",
+                "Starting hardware flash erase / factory reset for ${snapshot.selectedBoard.name} (${snapshot.selectedBoard.mcu.shortName} • ${snapshot.selectedBoard.flashSizeMb}MB)"
+            )
+            usbManager.eraseDeviceFlashOverUsb(
+                attached = snapshot.selectedUsbDevice,
+                board = snapshot.selectedBoard,
+                baudRate = snapshot.selectedBaudRate,
+                loopbackBench = snapshot.loopbackTestBench,
+                onProgress = { progress ->
+                    _uiState.update { it.copy(flashProgress = progress) }
+                }
+            )
+        }
+    }
+
     fun resetFlashState() {
+        flashJob?.cancel()
+        flashJob = null
+        usbManager.closeActiveConnection()
+        bleManager.abortFlash()
         _uiState.update { it.copy(flashProgress = FlashProgressState(phase = FlashPhase.IDLE)) }
+    }
+
+    fun startLiveSerialMonitor(baudRate: Int = _uiState.value.selectedBaudRate) {
+        val state = _uiState.value
+        val isFlashing = state.flashProgress.phase != FlashPhase.IDLE &&
+            state.flashProgress.phase != FlashPhase.COMPLETED &&
+            state.flashProgress.phase != FlashPhase.FAILED
+        if (isFlashing) return
+        usbManager.startSerialMonitor(
+            scope = viewModelScope,
+            attached = state.selectedUsbDevice,
+            baudRate = baudRate
+        )
+    }
+
+    fun stopLiveSerialMonitor() {
+        usbManager.closeActiveConnection()
+    }
+
+    fun deleteVaultEntriesForBoard(boardId: String) {
+        viewModelScope.launch {
+            val updated = vaultManager.deleteEntriesForBoard(boardId)
+            _uiState.update { it.copy(offlineVaultEntries = updated) }
+            appendLog(LogLevel.WARN, "VAULT", "Deleted cached firmware binaries for board $boardId")
+        }
     }
 
     fun sendConsoleCommand(command: String) {

@@ -573,6 +573,19 @@ class OfflineFirmwareVaultManager(context: Context) {
         }
     }
 
+    suspend fun deleteEntriesForBoard(boardId: String): List<CachedFirmwareEntry> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = readEntriesFromDiskInternal()
+            val toDelete = current.filter { it.boardId == boardId }
+            toDelete.forEach { entry ->
+                runCatching { resolveFile(entry.localFilePath).delete() }
+            }
+            val remaining = current.filterNot { it.boardId == boardId }
+            writeEntriesToDiskInternal(remaining)
+            remaining
+        }
+    }
+
     suspend fun clearAllVaultEntries(): List<CachedFirmwareEntry> = withContext(Dispatchers.IO) {
         mutex.withLock {
             binariesDir.listFiles()?.forEach { runCatching { it.delete() } }
